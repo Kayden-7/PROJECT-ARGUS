@@ -1,0 +1,21 @@
+# Environment variables — never commit
+.env
+*.env
+
+# Google OAuth credentials
+credentials.json
+token.json
+token_*.json
+
+# Database
+instance/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# VS Code
+.vscode/
