@@ -53,9 +53,21 @@ Pull the repo. Run the backend first so you have live endpoints to test against.
 - Expiry countdown timer (300s)
 
 ### Needs Phase 4 done (trust ledger)
-- Trust score display per action type (0–10 scale)
-- Trust history feed (what changed it, when)
+- Trust gauge per action type — shows label + contextual description:
+  - 0–20: Untrusted (Requires Oversight)
+  - 21–40: Low Trust (Learning Phase)
+  - 41–60: Developing (Generally Reliable)
+  - 61–80: Trusted (Safe to Delegate)
+  - 81–100: Highly Reliable (Autonomous Range)
+- Before/after trust delta snapshot per decision — e.g. `email.send.external: 52 → 59 (+7)`
+- Decision narrative — 1–2 line plain English explanation of why trust changed
+- Overall trust modifier display (0.8–1.2 range)
 - **This is the visual centrepiece — make it look good**
+
+### If we have time (frontend)
+- Visual timeline of trust evolution per action type (line graph or bar chart)
+- Trust replay mode — step through any past decision and see each modifier applied in order
+- Demo amplification mode — exaggerate visual trust changes for the 3-min demo without changing internal values
 
 ### Needs Phase 5–6 done (Gmail + Calendar)
 - Email draft preview (before/after)
