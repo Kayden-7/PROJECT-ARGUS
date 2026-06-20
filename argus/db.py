@@ -67,7 +67,7 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS trust_current (
             action_type TEXT PRIMARY KEY,
-            trust_current REAL NOT NULL CHECK(trust_current >= 1 AND trust_current <= 10)
+            trust_current REAL NOT NULL CHECK(trust_current >= 0 AND trust_current <= 100)
         );
 
         CREATE TABLE IF NOT EXISTS trust_events (
@@ -117,6 +117,7 @@ def init_db():
 
     db.execute("INSERT OR IGNORE INTO system_state VALUES ('SYSTEM_HARD_STOP', '0')")
     db.execute("INSERT OR IGNORE INTO system_state VALUES ('ACTIVE_PROFILE', 'Balanced')")
+    db.execute("INSERT OR IGNORE INTO system_state VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
 
     db.execute("INSERT OR IGNORE INTO permission_profiles VALUES ('Balanced', 1)")
     db.execute("INSERT OR IGNORE INTO permission_profiles VALUES ('Strict', 0)")
@@ -124,7 +125,7 @@ def init_db():
 
     from config import FREE_ACTIONS, GATED_ACTIONS
     for action in FREE_ACTIONS + GATED_ACTIONS:
-        db.execute("INSERT OR IGNORE INTO trust_current VALUES (?, 5.0)", (action,))
+        db.execute("INSERT OR IGNORE INTO trust_current VALUES (?, 40.0)", (action,))
 
     for action in GATED_ACTIONS:
         db.execute("INSERT OR IGNORE INTO policy_gates VALUES (?, 1.0, 5.0)", (action,))

@@ -36,16 +36,23 @@ def kernel_entry(proposal: dict) -> dict:
     from argus.validation import validate_proposal
     from argus.policy_engine import evaluate
 
-    is_valid, cleaned, error_code = validate_proposal(proposal)
-    if not is_valid:
+    result = validate_proposal(proposal)
+    if not result["valid"]:
         return {
-            "decision": "BLOCK",
-            "failure_type": "VALIDATION",
-            "failure_reason_code": error_code,
-            "trace": [f"Validation failed: {error_code}"],
-            "conflict_resolution_path": ["VALIDATION"],
-            "trust_impact": "none",
-            "action_expiry": 0
+            "decision":            "BLOCK",
+            "decision_source":     "VALIDATION",
+            "failure_type":        "VALIDATION",
+            "failure_reason_code": result["errors"][0]["code"] if result["errors"] else "VALIDATION_FAILED",
+            "terminated_at":       "VALIDATION",
+            "trace":               [{"step": "VALIDATION", "result": "FAIL",
+                                     "reason": str(result["errors"]), "before": None, "after": None}],
+            "trust_at_evaluation": None,
+            "effective_threshold": None,
+            "trust_impact":        "none",
+            "trust_delta_preview": None,
+            "action_expiry":       0,
+            "narrative":           "Proposal failed validation and was rejected before policy evaluation.",
+            "modifier_breakdown":  {},
         }
 
-    return evaluate(cleaned)
+    return evaluate(result["sanitized_proposal"])

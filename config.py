@@ -14,9 +14,9 @@ GATED_ACTIONS = [
 ALL_ACTIONS = FREE_ACTIONS + GATED_ACTIONS
 
 PROFILE_THRESHOLDS = {
-    "Strict": 999,
-    "Balanced": 7,
-    "Autonomous": 4
+    "Strict": 101,
+    "Balanced": 70,
+    "Autonomous": 40
 }
 
 ACTION_CATEGORIES = {
