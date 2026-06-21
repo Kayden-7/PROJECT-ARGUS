@@ -136,6 +136,10 @@ Part 3 built the template scaffolding (resolve/render/validate) but GPT-4o isn't
 
 Also deferred from Part 3: structured mandatory-intent checks (explicit deadline/question deterministically verified), and a "content snippet" feature (boilerplate/signatures) kept separate from style templates.
 
+Minor items from the Part 3 confirmation pass (✔, both flagged non-critical for a single-user demo):
+- **avoid_phrases normalization** — current check is lowercase substring match. Could be evaded by whitespace/punctuation/Unicode variants. Add deterministic normalization if it ever matters.
+- **renderer_version on the snapshot** — the pinned snapshot stores enum settings; if the render code changes later, the same snapshot could render differently. Store a renderer_version (or the already-rendered block) for audit reproducibility. Only matters if renderer changes while proposals are pending.
+
 ## Post-Competition Vision
 
 Run ARGUS as a Claude-native tool (not a website). 
