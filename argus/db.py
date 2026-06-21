@@ -132,7 +132,52 @@ def init_db():
             subject TEXT NOT NULL,
             body TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS email_templates (
+            id             TEXT PRIMARY KEY,
+            contact        TEXT,          -- canonical recipient email; NULL = any
+            action_type    TEXT,          -- ARGUS email action; NULL = any
+            tone           TEXT NOT NULL,
+            formality      TEXT NOT NULL,
+            length_class   TEXT NOT NULL,
+            greeting_style TEXT NOT NULL,
+            signoff_style  TEXT NOT NULL,
+            max_words      INTEGER NOT NULL,
+            max_sentences  INTEGER NOT NULL,
+            max_paragraphs INTEGER NOT NULL,
+            avoid_phrases  TEXT,          -- JSON array; VALIDATOR-ONLY, never in the model prompt
+            enabled        INTEGER NOT NULL DEFAULT 1,
+            version        INTEGER NOT NULL DEFAULT 1,
+            created_at     INTEGER NOT NULL,
+            updated_at     INTEGER NOT NULL,
+            CHECK (tone IN ('warm','neutral','direct','formal','friendly')),
+            CHECK (formality IN ('casual','professional','formal')),
+            CHECK (length_class IN ('brief','standard','detailed')),
+            CHECK (greeting_style IN ('none','first_name','formal_name')),
+            CHECK (signoff_style IN ('none','thanks','regards','best')),
+            CHECK (max_words BETWEEN 10 AND 1000),
+            CHECK (max_sentences BETWEEN 1 AND 30),
+            CHECK (max_paragraphs BETWEEN 1 AND 8)
+        );
     ''')
+
+    # Phase 5 Part 3: scope-uniqueness for templates (one row per scope rank).
+    # Partial unique indexes are the backstop; code-side upsert is the normal path.
+    for idx_sql in [
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tmpl_exact ON email_templates(contact, action_type) "
+        "WHERE contact IS NOT NULL AND action_type IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tmpl_contact ON email_templates(contact) "
+        "WHERE contact IS NOT NULL AND action_type IS NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tmpl_action ON email_templates(action_type) "
+        "WHERE contact IS NULL AND action_type IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tmpl_global "
+        "ON email_templates((contact IS NULL AND action_type IS NULL)) "
+        "WHERE contact IS NULL AND action_type IS NULL",
+    ]:
+        try:
+            db.execute(idx_sql)
+        except Exception:
+            pass
 
     # Migration: add damping columns to trust_current if upgrading an existing DB
     for col, definition in [

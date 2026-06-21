@@ -228,6 +228,36 @@ def create_app():
         db.close()
         return jsonify([dict(r) for r in rows]), 200
 
+    # ── Phase 5 Part 3: Message templates ─────────────────────────────────────
+
+    @app.route('/api/templates')
+    def templates_list():
+        from argus.templates import list_templates
+        return jsonify(list_templates()), 200
+
+    @app.route('/api/templates', methods=['POST'])
+    def templates_save():
+        from argus.templates import save_template
+        body = request.get_json(silent=True) or {}
+        settings = body.get("settings", {})
+        result = save_template(body.get("contact"), body.get("action_type"), settings)
+        if not result.get("success"):
+            return jsonify(result), 400
+        return jsonify(result), 200
+
+    @app.route('/api/templates/<template_id>', methods=['DELETE'])
+    def templates_delete(template_id):
+        from argus.templates import delete_template
+        result = delete_template(template_id)
+        return jsonify(result), (200 if result.get("success") else 404)
+
+    @app.route('/api/templates/match')
+    def templates_match():
+        from argus.templates import snapshot_for_proposal
+        contact = request.args.get("contact")
+        action_type = request.args.get("action_type")
+        return jsonify(snapshot_for_proposal(contact, action_type)), 200
+
     # ── Phase 5 Part 1: Gmail connection (OAuth + connectivity test) ───────────
 
     @app.route('/api/gmail/connect')

@@ -124,6 +124,18 @@ Currently: single-user, conditional UPDATEs suffice. Deferred: SQLite busy/lock 
 
 ---
 
+## Phase 9 — Message-template acceptance tests (write when GPT-4o is wired)
+
+Part 3 built the template scaffolding (resolve/render/validate) but GPT-4o isn't wired, so these can only be tested in Phase 9. Stress test flagged them as required before claiming the LLM drafting path is safe:
+- Mocked malicious GPT-4o outputs (prompt-injection echoes, header/metadata leakage in body)
+- Unicode / quoted-content / multilingual body variants vs the structural validator
+- Required-content omission: a body that passes all conformance checks but drops the user's apology / question / deadline (proves the validator does NOT guarantee intent preservation)
+- Verify GPT-4o receives BODY-ONLY drafting context (no recipient/subject/action authority)
+- Validator-fail → MANUAL_REVIEW (no auto-regeneration)
+- Hard-conflict detection (template structurally cannot carry required intent) → MANUAL_REVIEW vs advisory fit-notice
+
+Also deferred from Part 3: structured mandatory-intent checks (explicit deadline/question deterministically verified), and a "content snippet" feature (boilerplate/signatures) kept separate from style templates.
+
 ## Post-Competition Vision
 
 Run ARGUS as a Claude-native tool (not a website). 

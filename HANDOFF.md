@@ -9,7 +9,7 @@ Pull first. Push when done. WhatsApp when switching.
 ## Current handoff
 
 **Last updated by:** Kayden
-**Status:** Phase 5 Part 1 + Part 2 DONE — Gmail connected + crash-safe execution layer live. 630 tests 100% passing.
+**Status:** Phase 5 Parts 1–3 DONE — Gmail connected + crash-safe execution + message templates. 688 tests 100% passing.
 **Next person needs to:** Pull, run `python app.py`, build frontend against existing endpoints
 **Files changed:** app.py, argus/gmail_client.py, argus/executor.py, argus/db.py, requirements.txt, tests/*
 **Notes:** Run `pip install -r requirements.txt` then `python app.py` (port 8081). Run `python run_tests.py` to verify all green. Gmail OAuth: visit `/api/gmail/connect` once to authorise the demo inbox.
@@ -24,7 +24,7 @@ Pull first. Push when done. WhatsApp when switching.
 | 2 | Permission layer + conflict resolution | DONE |
 | 3 | Approval queue | DONE |
 | 4 | Trust ledger | DONE |
-| 5 | Gmail integration | Part 1+2 DONE (connect + execution); templates/safety filter next |
+| 5 | Gmail integration | Part 1+2+3 DONE (connect + execution + templates); safety filter next |
 | 6 | Calendar integration | NOT STARTED |
 | 7 | Audit trail | NOT STARTED |
 | 8 | Fail-safes | NOT STARTED |
@@ -111,7 +111,12 @@ The trust gauge is still the visual centrepiece (see Phase 4 section) — but pr
 - `POST /api/executions/tick` — manual "process now" button if you want one; the queue poll already drives execution.
 - Email draft preview (before/after)
 - Calendar event display
-- **Message template editor** — a settings panel where the user defines per-contact rules: tone, length, any phrases to avoid. Example: "Emails to boss → max 3 sentences, professional, no exclamation marks." Show the active template on the approval card when a draft is queued so the user can verify the AI followed it.
+- **Message template editor** — settings panel to define per-contact/per-action style rules. Endpoints are LIVE: `GET/POST/DELETE /api/templates`, and `GET /api/templates/match?contact=&action_type=` (returns the matched template snapshot, its scope, or the conservative default). Form collects only structured fields — tone, formality, length preset, greeting, sign-off, optional "avoid phrases" chips, enabled toggle. **No free-form instructions textarea** (deliberate — it's an injection surface).
+  - Frame it as **"communication boundaries," NOT an "AI humanizer."** Clinical, not charming.
+  - **"Applied writing rules" panel** beside the draft (Phase 9): show which template matched, its scope ("Contact + Reply"), and the rules. Distinguish **Applied** (rule passed to the model) vs **Checked** (validator confirmed: "3 sentences ✓, no exclamation marks ✓") vs **Not mechanically verified** (subjective tone). It's a verifier readout, not an AI claim.
+  - **"Why this template?"** one-liner: "Selected because this is a reply to [contact], matching your contact-specific reply template."
+  - When no template matches, show: "No saved template matched. Conservative default applied."
+  - Anti-patterns to avoid: no "writes exactly like you" claims, no humanness score, no gamified voice-matching.
 
 ### Needs Phase 7 done (audit trail)
 - Audit log table — scrollable, show decision, action type, timestamp, reason code
