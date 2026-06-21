@@ -127,9 +127,15 @@ def create_app():
 
     @app.route('/api/queue')
     def queue_list():
-        # expire_stale() runs on every read — intentional, keeps queue clean
+        # expire_stale() + reconcile() run on every read — keeps queue clean and
+        # drives execution forward (reconcile-on-read; no background worker).
         from argus.queue import expire_stale, fetch_pending
         expire_stale()
+        try:
+            from argus.executor import reconcile
+            reconcile()
+        except Exception:
+            pass  # a reconcile failure must never break the queue read
         items = fetch_pending()
         return jsonify(items), 200
 
@@ -187,6 +193,40 @@ def create_app():
         if not result.get("success"):
             return _queue_error(result)
         return jsonify({"success": True, "id": result["id"], "status": result["status"]}), 200
+
+    # ── Phase 5 Part 2: Execution layer (reconcile + view) ────────────────────
+
+    @app.route('/api/executions/tick', methods=['POST'])
+    def executions_tick():
+        # Explicit reconcile trigger (the queue read also reconciles).
+        from argus.executor import reconcile
+        import sqlite3 as _sql, os as _os
+        try:
+            reconcile()
+        except Exception as e:
+            return jsonify({"success": False, "error_code": "RECONCILE_FAILED",
+                            "detail": str(e)}), 500
+        DB = _os.path.join(_os.path.dirname(__file__), 'instance', 'argus.db')
+        db = _sql.connect(DB); db.row_factory = _sql.Row
+        rows = db.execute(
+            "SELECT status, COUNT(*) AS c FROM pending_executions GROUP BY status"
+        ).fetchall()
+        db.close()
+        return jsonify({"success": True,
+                        "counts": {r["status"]: r["c"] for r in rows}}), 200
+
+    @app.route('/api/executions')
+    def executions_list():
+        import sqlite3 as _sql, os as _os
+        DB = _os.path.join(_os.path.dirname(__file__), 'instance', 'argus.db')
+        db = _sql.connect(DB); db.row_factory = _sql.Row
+        rows = db.execute(
+            "SELECT execution_id, approval_id, action_type, status, draft_id, "
+            "message_id, status_reason, attempt_count, created_at, updated_at "
+            "FROM pending_executions ORDER BY created_at DESC"
+        ).fetchall()
+        db.close()
+        return jsonify([dict(r) for r in rows]), 200
 
     # ── Phase 5 Part 1: Gmail connection (OAuth + connectivity test) ───────────
 

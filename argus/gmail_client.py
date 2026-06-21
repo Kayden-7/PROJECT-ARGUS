@@ -16,6 +16,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 TOKEN_PATH = os.path.join(ROOT, 'instance', 'gmail_token.json')
@@ -126,3 +127,81 @@ def send_test_email(to, subject, body):
         userId='me', body={'raw': raw}
     ).execute()
     return {"message_id": sent.get('id'), "thread_id": sent.get('threadId')}
+
+
+# ── Part 2: crash-safe primitives ────────────────────────────────────────────
+# These map 1:1 to the locked execution state machine. The executor decides
+# WHEN to call them; this module only knows HOW to talk to Gmail.
+
+def get_history_id():
+    """Current mailbox historyId — saved before a send as review evidence."""
+    service = get_service()
+    profile = service.users().getProfile(userId='me').execute()
+    return profile.get('historyId')
+
+
+def create_draft(to, subject, body, thread_id=None, in_reply_to=None):
+    """
+    Create a Gmail draft. Returns the durable draft id (stable across crashes).
+    This is the pre-send checkpoint: a draft that exists but was never sent is
+    a safe, recoverable state.
+    """
+    service = get_service()
+    msg = MIMEText(body)
+    msg['to'] = to
+    msg['subject'] = subject
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+        msg['References'] = in_reply_to
+    message = {'raw': base64.urlsafe_b64encode(msg.as_bytes()).decode()}
+    if thread_id:
+        message['threadId'] = thread_id
+    draft = service.users().drafts().create(
+        userId='me', body={'message': message}
+    ).execute()
+    return draft.get('id')
+
+
+def draft_exists(draft_id):
+    """True if the draft still exists (i.e. has NOT been sent/consumed)."""
+    service = get_service()
+    try:
+        service.users().drafts().get(userId='me', id=draft_id).execute()
+        return True
+    except HttpError as e:
+        if e.resp.status == 404:
+            return False
+        raise
+
+
+def send_draft(draft_id):
+    """
+    Send an existing draft. Gmail consumes the draft and returns the new sent
+    Message. Returns {message_id, thread_id}.
+    """
+    service = get_service()
+    sent = service.users().drafts().send(
+        userId='me', body={'id': draft_id}
+    ).execute()
+    return {"message_id": sent.get('id'), "thread_id": sent.get('threadId')}
+
+
+# ── Idempotent ops (safe to replay) ──────────────────────────────────────────
+
+def trash_message(message_id):
+    """Move a message to trash (reversible, inspectable). Never permanent delete."""
+    service = get_service()
+    service.users().messages().trash(userId='me', id=message_id).execute()
+    return {"message_id": message_id, "trashed": True}
+
+
+def modify_labels(message_id, add=None, remove=None):
+    """Add/remove labels — convergent, safe to replay (re-adding is a no-op)."""
+    service = get_service()
+    body = {}
+    if add:
+        body['addLabelIds'] = add
+    if remove:
+        body['removeLabelIds'] = remove
+    service.users().messages().modify(userId='me', id=message_id, body=body).execute()
+    return {"message_id": message_id, "modified": True}

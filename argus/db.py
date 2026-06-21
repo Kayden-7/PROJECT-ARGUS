@@ -105,11 +105,24 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS pending_executions (
-            execution_id TEXT PRIMARY KEY,
-            action_type TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            approved_at INTEGER NOT NULL,
-            execute_after INTEGER NOT NULL
+            execution_id  TEXT PRIMARY KEY,
+            approval_id   TEXT UNIQUE,        -- queue item id; UNIQUE = one execution per approval
+            action_type   TEXT NOT NULL,
+            payload_json  TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'DRAFT_PENDING'
+                          CHECK(status IN ('DRAFT_PENDING','DRAFT_READY','SENDING',
+                                           'COMPLETED','MANUAL_REVIEW','FAILED')),
+            draft_id      TEXT,               -- Gmail draft id (durable pre-send checkpoint)
+            message_id    TEXT,               -- resulting sent message id
+            history_id    TEXT,               -- mailbox historyId saved before send (review evidence)
+            owner_token   TEXT,               -- claim token fencing all SENDING writes
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            status_reason TEXT,               -- why it's in MANUAL_REVIEW / FAILED
+            last_error    TEXT,
+            approved_at   INTEGER NOT NULL,
+            execute_after INTEGER NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT 0,
+            updated_at    INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS demo_emails (
@@ -130,6 +143,32 @@ def init_db():
             db.execute(f"ALTER TABLE trust_current ADD COLUMN {col} {definition}")
         except Exception:
             pass  # column already exists
+
+    # Migration: Phase 5 Part 2 execution-state columns on pending_executions
+    for col, definition in [
+        ("approval_id",   "TEXT"),
+        ("status",        "TEXT NOT NULL DEFAULT 'DRAFT_PENDING'"),
+        ("draft_id",      "TEXT"),
+        ("message_id",    "TEXT"),
+        ("history_id",    "TEXT"),
+        ("owner_token",   "TEXT"),
+        ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("status_reason", "TEXT"),
+        ("last_error",    "TEXT"),
+        ("created_at",    "INTEGER NOT NULL DEFAULT 0"),
+        ("updated_at",    "INTEGER NOT NULL DEFAULT 0"),
+    ]:
+        try:
+            db.execute(f"ALTER TABLE pending_executions ADD COLUMN {col} {definition}")
+        except Exception:
+            pass  # column already exists
+    # UNIQUE index on approval_id (ALTER can't add UNIQUE inline on existing tables)
+    try:
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approval ON pending_executions(approval_id)"
+        )
+    except Exception:
+        pass
 
     db.execute("INSERT OR IGNORE INTO system_state VALUES ('SYSTEM_HARD_STOP', '0')")
     db.execute("INSERT OR IGNORE INTO system_state VALUES ('ACTIVE_PROFILE', 'Balanced')")

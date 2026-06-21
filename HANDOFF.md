@@ -9,10 +9,10 @@ Pull first. Push when done. WhatsApp when switching.
 ## Current handoff
 
 **Last updated by:** Kayden
-**Status:** Phase 4 DONE — trust ledger live, all connectors wired, 606 tests 100% passing
+**Status:** Phase 5 Part 1 + Part 2 DONE — Gmail connected + crash-safe execution layer live. 630 tests 100% passing.
 **Next person needs to:** Pull, run `python app.py`, build frontend against existing endpoints
-**Files changed:** app.py, argus/trust_ledger.py, argus/queue.py, config.py, tests/*
-**Notes:** Run `pip install -r requirements.txt` then `python app.py` (port 8081). Run `python run_tests.py` to verify all green.
+**Files changed:** app.py, argus/gmail_client.py, argus/executor.py, argus/db.py, requirements.txt, tests/*
+**Notes:** Run `pip install -r requirements.txt` then `python app.py` (port 8081). Run `python run_tests.py` to verify all green. Gmail OAuth: visit `/api/gmail/connect` once to authorise the demo inbox.
 
 ---
 
@@ -24,7 +24,7 @@ Pull first. Push when done. WhatsApp when switching.
 | 2 | Permission layer + conflict resolution | DONE |
 | 3 | Approval queue | DONE |
 | 4 | Trust ledger | DONE |
-| 5 | Gmail integration | NOT STARTED |
+| 5 | Gmail integration | Part 1+2 DONE (connect + execution); templates/safety filter next |
 | 6 | Calendar integration | NOT STARTED |
 | 7 | Audit trail | NOT STARTED |
 | 8 | Fail-safes | NOT STARTED |
@@ -105,7 +105,10 @@ The trust gauge is still the visual centrepiece (see Phase 4 section) — but pr
 ### If we have time (frontend)
 - Demo amplification mode — exaggerate visual trust changes for the 3-min demo without changing internal values
 
-### Needs Phase 5–6 done (Gmail + Calendar)
+### Needs Phase 5 done (Gmail execution) — endpoints now live
+- **Execution status panel** — `GET /api/executions` lists every execution with its state: `DRAFT_PENDING → DRAFT_READY → SENDING → COMPLETED`, or `MANUAL_REVIEW`. Show as a small pipeline/status chip per item.
+- **MANUAL_REVIEW surface (important)** — when an execution hits `MANUAL_REVIEW`, surface it prominently with its `status_reason` (e.g. "Crashed during send — verify in Gmail Sent folder"). This is ARGUS's core trust behaviour: *on any uncertainty it stops and asks the human, never silently double-sends or loses an email.* Make this visible and reassuring, not alarming.
+- `POST /api/executions/tick` — manual "process now" button if you want one; the queue poll already drives execution.
 - Email draft preview (before/after)
 - Calendar event display
 - **Message template editor** — a settings panel where the user defines per-contact rules: tone, length, any phrases to avoid. Example: "Emails to boss → max 3 sentences, professional, no exclamation marks." Show the active template on the approval card when a draft is queued so the user can verify the AI followed it.
