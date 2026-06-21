@@ -37,6 +37,27 @@ Pull first. Push when done. WhatsApp when switching.
 
 Pull the repo. Run the backend first so you have live endpoints to test against.
 
+### ⚠ READ FIRST — Trust psychology & tone (shapes EVERYTHING below)
+
+ARGUS is **a verifiable delegation control system with human-readable trust memory — NOT a human-like assistant.** Judges are scoring trust. The UI must feel like a system you can *audit and understand*, not a chatbot that's trying to be liked.
+
+**Tone:** calm, clinical, precise. Like a cockpit instrument or a compliance dashboard. Never bubbly, never emotional.
+
+**DO:**
+- Show *why* for every decision — a collapsible "Why this was allowed / blocked / gated" reasoning trace (collapsed by default, expandable).
+- On every BLOCK, prominently show the **containment message**: e.g. "Action blocked before execution. No external effects occurred." This reassurance matters more than the block itself.
+- Show a **recovery state** when trust recently dropped and is climbing back: labels like *Recovering / Stabilizing / Rebuilding Confidence*. This shows the system *manages* recovery, not just scores it. (Backend will expose this field.)
+- Show the **explanation fingerprint** — one plain sentence per decision, e.g. "Allowed: stable email.send.external history (12/12 success)." (Backend will provide this.)
+- Lean on determinism as a selling point: same input → same outcome, every time.
+
+**DON'T (these read as fake/superficial to judges — automatic credibility loss):**
+- ❌ No gamified XP-style trust bars or "level up" framing. Trust is a serious signal, not a game score.
+- ❌ No fake emotion or anthropomorphism ("ARGUS is learning from its mistakes like a human"). Cut it.
+- ❌ No inflated confidence language ("Highly confident!") unless it's mathematically grounded in success history.
+- ❌ No "magic" trust score with no visible reasoning. If the user can't see why, they won't trust it.
+
+The trust gauge is still the visual centrepiece (see Phase 4 section) — but present it as a **trust memory / audit readout**, not a game bar.
+
 ### Start immediately — no backend needed
 - Overall layout and dark theme (bg `#080C12`, accent `#E8B84B`, monospace font)
 - Navigation between 3 panels: Agent Console, Approval Queue, Audit Trail
