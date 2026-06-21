@@ -21,8 +21,8 @@ Pull first. Push when done. WhatsApp when switching.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Setup — Flask skeleton, SQLite, kernel | DONE |
-| 2 | Permission layer + conflict resolution | NOT STARTED |
-| 3 | Approval queue | NOT STARTED |
+| 2 | Permission layer + conflict resolution | DONE |
+| 3 | Approval queue | DONE |
 | 4 | Trust ledger | NOT STARTED |
 | 5 | Gmail integration | NOT STARTED |
 | 6 | Calendar integration | NOT STARTED |
@@ -44,6 +44,21 @@ Pull the repo. Run the backend first so you have live endpoints to test against.
 - Permission profile switcher (Strict / Balanced / Autonomous) — visual only for now
 - Emergency stop button — visual only for now
 
+### Login page (no backend needed — hardcoded)
+- Simple login screen before the dashboard
+- Username: `admin` / Password: `argus2026` (hardcoded, checked client-side for demo only)
+- On success: set a session flag and redirect to dashboard
+- Don't build real auth — this is demo polish only
+
+### Integrations page (frontend placeholder — no backend needed yet)
+- A settings/integrations panel where users "connect" their Gmail and Google Calendar
+- For the demo, show two cards:
+  - **Gmail** — "Connect Gmail" button, shows `project.argus.242@gmail.com` as connected (hardcoded)
+  - **Google Calendar** — "Connect Calendar" button, shows as connected (hardcoded)
+- These are visual placeholders — the real OAuth is handled by the backend in Phase 5/6
+- Label them clearly: "Connected via Google OAuth" with a green status dot
+- This makes the demo feel like a real product without requiring live OAuth in the frontend
+
 ### Needs Phase 2 done (decision engine)
 - Decision display card — shows `decision` (ALLOW / GATED / BLOCK), `decision_source`, `failure_reason_code`, `terminated_at`, `trace` list
 
@@ -62,22 +77,31 @@ Pull the repo. Run the backend first so you have live endpoints to test against.
 - Before/after trust delta snapshot per decision — e.g. `email.send.external: 52 → 59 (+7)`
 - Decision narrative — 1–2 line plain English explanation of why trust changed
 - Overall trust modifier display (0.8–1.2 range)
+- **Trust ceiling indicator** — show the profile's ceiling (e.g. Balanced caps at 85). Visual marker on the gauge so user sees the ceiling before it's hit.
+- **Trust decay indicator** — if an action type hasn't been used in a while, show a small warning icon that trust is drifting back toward baseline (40).
 - **This is the visual centrepiece — make it look good**
 
 ### If we have time (frontend)
-- Visual timeline of trust evolution per action type (line graph or bar chart)
-- Trust replay mode — step through any past decision and see each modifier applied in order
 - Demo amplification mode — exaggerate visual trust changes for the 3-min demo without changing internal values
 
 ### Needs Phase 5–6 done (Gmail + Calendar)
 - Email draft preview (before/after)
 - Calendar event display
+- **Message template editor** — a settings panel where the user defines per-contact rules: tone, length, any phrases to avoid. Example: "Emails to boss → max 3 sentences, professional, no exclamation marks." Show the active template on the approval card when a draft is queued so the user can verify the AI followed it.
 
 ### Needs Phase 7 done (audit trail)
 - Audit log table — scrollable, show decision, action type, timestamp, reason code
+- **Monthly/periodic summary report view** — a dedicated panel or modal showing a digest for a selected time period: total actions, FREE vs GATED breakdown, approval rate, rejection rate, any prime rule triggers, any hard stop events, trust trajectory summary. This is the user's "health check" to verify ARGUS behaved correctly.
+- **Trust replay mode** — click any past decision in the audit log and see a step-by-step breakdown of every modifier that was applied (inertia weight, overall modifier, severity tier, contact relax amount, final delta). Shows the user exactly why the trust score moved the way it did.
+- **Visual trust timeline** — line graph of trust score over time per action type. User selects an action from a dropdown, graph renders from trust history. Shows trust trajectory at a glance.
+
+### Needs Phase 8 done (fail-safes)
+- **Private Contact List management** — a settings panel where the user can add contacts whose emails ARGUS will never process or make decisions on. Add/remove contacts. When a proposal involves a private contact, ARGUS blocks it before the AI even sees the email content. Label clearly: "ARGUS will not read or act on emails involving these people."
 
 ### Needs Phase 9 done (demo mode)
 - Demo reset button — calls `POST /demo/reset`, reseeds the inbox for a clean 3-min demo run
+- **GPT-4o prompt framework indicator** — small UI element showing the active prompt framework version (e.g. "Framework v1.2") so the user knows which set of constraints GPT-4o is operating under. Useful for the demo to show the system is structured, not free-form.
+- **Re-consent banner** — if the monthly re-consent is overdue, show a banner on the dashboard: "ARGUS activity review due. Review the monthly summary and confirm you're happy with how it's been operating." Confirm button calls `POST /api/consent`. If not confirmed within 3 days, the dashboard shows a warning that the profile has been downgraded to Balanced automatically.
 
 ---
 

@@ -1,6 +1,9 @@
 import sqlite3
 import os
-from config import FREE_ACTIONS, APPROVAL_EXPIRY_SECONDS, PROFILE_THRESHOLDS
+from config import (
+    FREE_ACTIONS, APPROVAL_EXPIRY_SECONDS, PROFILE_THRESHOLDS,
+    STARTING_TRUST, INERTIA_THRESHOLD, INERTIA_WEIGHT, OVERALL_MOD_START,
+)
 
 DATABASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'instance', 'argus.db')
 
@@ -36,11 +39,7 @@ SEVERITY_DELTAS = {
     "HIGH":    (10,  -20),
 }
 
-SEVERITY_ORDER    = ["TRIVIAL", "LOW", "MEDIUM", "HIGH"]
-STARTING_TRUST    = 40.0
-INERTIA_THRESHOLD = 5    # first N executions are dampened
-INERTIA_WEIGHT    = 0.5
-OVERALL_MOD_START = 1.0
+SEVERITY_ORDER = ["TRIVIAL", "LOW", "MEDIUM", "HIGH"]
 
 
 # ── DB helpers (each returns None / False to signal failure) ──────────────────

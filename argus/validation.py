@@ -26,7 +26,8 @@ REQUIRED_FIELDS = {
 
 # All fields that may appear in a valid proposal
 KNOWN_FIELDS = {
-    "intent", "action_type", "entities", "draft", "uncertainty_flags"
+    "intent", "action_type", "entities", "draft", "uncertainty_flags",
+    "action_expiry", "importance"
 }
 
 # Entity fields that must be strings if present
@@ -123,7 +124,8 @@ def validate_proposal(proposal: dict) -> dict:
         "entities": {k: v.strip() for k, v in entities.items() if isinstance(v, str)},
         "draft": proposal.get("draft", ""),
         "uncertainty_flags": proposal.get("uncertainty_flags", []),
-        "action_expiry": expiry
+        "action_expiry": expiry,
+        "importance": proposal.get("importance", "normal"),
     }
 
     return {
