@@ -13,8 +13,8 @@ TheFirst Spark Challenge — A1: Trust & permissions for autonomous agents.
 - **Project name:** ARGUS
 - **Team members:**
   - Kayden — backend (Flask, SQLite, policy engine, trust ledger, Gmail integration)
-  - [friend's name] — frontend (dashboard, approval cards, audit/trust UI)
-- Status: ⏳ add friend's full name
+  - Baldwin — frontend (dashboard, approval cards, audit/trust UI)
+- Status: completed
 
 ### 2. Problem statement and target user
 - **Problem statement:** AI agents are increasingly given permission to *act* — send email, delete, schedule — but today the AI decides its own permissions. It's all-or-nothing: babysit every action (no time saved) or hand over full control (too risky). There's no deterministic, auditable layer that decides what an AI agent may do and lets it earn trust over time.
