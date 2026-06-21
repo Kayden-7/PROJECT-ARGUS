@@ -194,6 +194,18 @@ try:
     r = record_event('email.archive', None, 'TRIVIAL')
     check('None outcome -> success=False', r['success'] is False)
 
+    # ── record_event: unknown action_type ─────────────────────────────────────
+    sec('record_event — Unknown Action Type')
+    r = record_event('email.hack_everything', 'SUCCESS', 'TRIVIAL')
+    check('Unknown action_type -> success=False', r['success'] is False)
+    check('Unknown action_type error_code = UNKNOWN_ACTION_TYPE', r['error_code'] == 'UNKNOWN_ACTION_TYPE')
+
+    r = record_event('', 'SUCCESS', 'TRIVIAL')
+    check('Empty action_type -> success=False', r['success'] is False)
+
+    r = record_event(None, 'SUCCESS', 'TRIVIAL')
+    check('None action_type -> success=False', r['success'] is False)
+
     # ── record_event: trust written to DB ─────────────────────────────────────
     sec('record_event — Persistence to DB')
     set_trust('email.mark_read', 40.0)
@@ -553,8 +565,9 @@ try:
     db_p2b.close()
     check('trust_event row written to DB after FREE ALLOW', event_row is not None)
 
-    # ── Phase 4 Part 2: APPROVED → trust SUCCESS connector ───────────────────
-    sec('API Connector — POST /api/queue/<id>/approve writes trust SUCCESS event')
+    # ── Phase 4 Part 2: APPROVED → no trust event (fires in Phase 5 post-execution) ──
+    sec('API Connector — POST /api/queue/<id>/approve does NOT write trust event')
+    # APPROVED = human consent, not execution success. Trust fires after Gmail API call in Phase 5.
 
     db_p3 = _sql.connect(DB_PATH)
     db_p3.execute("DELETE FROM trust_events WHERE action_type='email.send.external'")
@@ -570,18 +583,16 @@ try:
     r_approve = requests.post(f'{BASE}/api/queue/{qid}/approve')
     da = r_approve.json()
     check('Approve returns 200',                          r_approve.status_code == 200)
-    check('Approve response has trust field',             da.get('trust') is not None)
-    check('Approve trust event_created = True',           da['trust'].get('event_created') is True)
-    check('Approve trust_after > trust_before',
-          (da['trust'].get('trust_after') or 0) > (da['trust'].get('trust_before') or 0))
+    check('Approve response has no trust field',          da.get('trust') is None)
 
     db_p3b = _sql.connect(DB_PATH)
-    ev_row = db_p3b.execute("SELECT * FROM trust_events WHERE action_type='email.send.external' AND reason LIKE 'QUEUE:APPROVED%'").fetchone()
+    ev_row = db_p3b.execute("SELECT * FROM trust_events WHERE action_type='email.send.external'").fetchone()
     db_p3b.close()
-    check('APPROVED: trust_event row written to DB', ev_row is not None)
+    check('APPROVED: no trust_event row written to DB', ev_row is None)
 
-    # ── Phase 4 Part 2: REJECTED → trust FAILURE connector ───────────────────
-    sec('API Connector — POST /api/queue/<id>/reject writes trust FAILURE event')
+    # ── Phase 4 Part 2: REJECTED → no trust event (human override, not agent failure) ──
+    sec('API Connector — POST /api/queue/<id>/reject does NOT write trust event')
+    # Human rejection ≠ agent failure. Trust FAILURE fires only on execution failure in Phase 5.
 
     db_p4 = _sql.connect(DB_PATH)
     db_p4.execute("DELETE FROM trust_events WHERE action_type='email.reply'")
@@ -598,15 +609,12 @@ try:
                              json={'reason': 'Too casual for this contact'})
     dr = r_reject.json()
     check('Reject returns 200',                           r_reject.status_code == 200)
-    check('Reject response has trust field',              dr.get('trust') is not None)
-    check('Reject trust event_created = True',            dr['trust'].get('event_created') is True)
-    check('Reject trust_after < trust_before (FAILURE)',
-          (dr['trust'].get('trust_after') or 99) < (dr['trust'].get('trust_before') or 0))
+    check('Reject response has no trust field',           dr.get('trust') is None)
 
     db_p4b = _sql.connect(DB_PATH)
-    ev_row2 = db_p4b.execute("SELECT * FROM trust_events WHERE action_type='email.reply' AND reason LIKE 'QUEUE:REJECTED%'").fetchone()
+    ev_row2 = db_p4b.execute("SELECT * FROM trust_events WHERE action_type='email.reply'").fetchone()
     db_p4b.close()
-    check('REJECTED: trust_event row written to DB', ev_row2 is not None)
+    check('REJECTED: no trust_event row written to DB', ev_row2 is None)
 
 finally:
     server.terminate()

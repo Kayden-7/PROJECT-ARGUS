@@ -85,9 +85,17 @@ def create_app():
             }), 200
 
         # ALLOW → Phase 2→4 connector: record trust event for FREE action
+        # FREE actions are executed immediately on ALLOW (no separate execution phase),
+        # so trust writes here correctly reflect actual execution outcome.
         if outcome == "ALLOW":
             from argus.trust_ledger import record_event
+            from config import ALL_ACTIONS
             action_type = body.get("action_type", "")
+            if action_type not in ALL_ACTIONS:
+                return jsonify({
+                    "success": True, "decision": "ALLOW",
+                    "decision_dict": decision, "queue": None, "trust": None
+                }), 200
             trust_result = record_event(action_type, "SUCCESS", reason="FREE_ACTION:ALLOW")
             trust_field = {
                 "event_created": trust_result.get("success", False),
@@ -139,37 +147,18 @@ def create_app():
     @app.route('/api/queue/<item_id>/approve', methods=['POST'])
     def queue_approve(item_id):
         from argus.queue import approve
-        import json as _json
         result = approve(item_id)
         if not result.get("success"):
             return _queue_error(result)
 
-        # Phase 3→4 connector: APPROVED → trust SUCCESS event
-        trust_field = None
-        try:
-            from argus.trust_ledger import record_event
-            proposal_json = result.get("proposal_json", "{}")
-            proposal = _json.loads(proposal_json) if isinstance(proposal_json, str) else proposal_json
-            action_type = proposal.get("action_type", "")
-            if action_type:
-                tr = record_event(action_type, "SUCCESS", reason="QUEUE:APPROVED")
-                trust_field = {
-                    "event_created": tr.get("success", False),
-                    "event_id":      tr.get("event_id"),
-                    "trust_before":  tr.get("trust_before"),
-                    "trust_after":   tr.get("trust_after"),
-                    "actual_delta":  tr.get("actual_delta"),
-                }
-        except Exception:
-            pass  # trust write failure must never block the approval response
-
+        # Trust SUCCESS fires in Phase 5 after actual Gmail execution, not at approval time.
+        # APPROVED = human consent, not execution success. Trust must reflect reliability, not approvals.
         return jsonify({"success": True, "id": result["id"], "status": result["status"],
-                        "approved_at": result["approved_at"], "trust": trust_field}), 200
+                        "approved_at": result["approved_at"]}), 200
 
     @app.route('/api/queue/<item_id>/reject', methods=['POST'])
     def queue_reject(item_id):
         from argus.queue import reject
-        import json as _json
         body = request.get_json(silent=True) or {}
         reason = body.get("reason", "")
         if not isinstance(reason, str) or not reason.strip():
@@ -179,27 +168,9 @@ def create_app():
         if not result.get("success"):
             return _queue_error(result)
 
-        # Phase 3→4 connector: REJECTED → trust FAILURE event
-        trust_field = None
-        try:
-            from argus.trust_ledger import record_event
-            proposal_json = result.get("proposal_json", "{}")
-            proposal = _json.loads(proposal_json) if isinstance(proposal_json, str) else proposal_json
-            action_type = proposal.get("action_type", "")
-            if action_type:
-                tr = record_event(action_type, "FAILURE", reason=f"QUEUE:REJECTED:{reason.strip()[:80]}")
-                trust_field = {
-                    "event_created": tr.get("success", False),
-                    "event_id":      tr.get("event_id"),
-                    "trust_before":  tr.get("trust_before"),
-                    "trust_after":   tr.get("trust_after"),
-                    "actual_delta":  tr.get("actual_delta"),
-                }
-        except Exception:
-            pass  # trust write failure must never block the rejection response
-
-        return jsonify({"success": True, "id": result["id"], "status": result["status"],
-                        "trust": trust_field}), 200
+        # Human rejection ≠ agent failure. A user changing their mind must not penalise trust.
+        # Trust FAILURE fires in Phase 5 only on actual execution failure (Gmail API error / timeout).
+        return jsonify({"success": True, "id": result["id"], "status": result["status"]}), 200
 
     @app.route('/api/queue/<item_id>/cancel', methods=['POST'])
     def queue_cancel(item_id):

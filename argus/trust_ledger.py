@@ -200,6 +200,10 @@ def record_event(action_type: str, outcome: str, severity: str = None, reason: s
     if outcome not in VALID_OUTCOMES:
         return {"success": False, "error_code": "INVALID_OUTCOME", "detail": outcome}
 
+    from config import ALL_ACTIONS
+    if action_type not in ALL_ACTIONS:
+        return {"success": False, "error_code": "UNKNOWN_ACTION_TYPE", "detail": action_type}
+
     trust_before = STARTING_TRUST  # captured early for reconciliation fallback
 
     try:

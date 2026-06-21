@@ -188,10 +188,10 @@ try:
     r_check = requests.get(f'{BASE}/api/queue/{item_id}')
     check('Queue detail reflects APPROVED',  r_check.json().get('status') == 'APPROVED')
 
-    # Phase 3→4 is now wired: approve should write a trust SUCCESS event
+    # Trust fires in Phase 5 post-execution, not at approval. Verify no trust event written here.
     trust_events_count = db_one("SELECT COUNT(*) as cnt FROM trust_events WHERE action_type='email.send.external'")
-    check('Phase 3→4 wired: trust event written after approve',
-          int(trust_events_count['cnt']) >= 1)
+    check('Phase 3→4: no trust event at approve (trust deferred to Phase 5 execution)',
+          int(trust_events_count['cnt']) == 0)
 
     sec('C3: GATED Action → Reject → REJECTED State')
     r = propose({

@@ -9,10 +9,10 @@ Pull first. Push when done. WhatsApp when switching.
 ## Current handoff
 
 **Last updated by:** Kayden
-**Status:** Phase 1 DONE — /health returns 200, DB initialises clean
-**Next person needs to:** Pull, run app on port 8081, start Phase 2
-**Files changed:** app.py (port → 8081)
-**Notes:** Run `pip install -r requirements.txt` then `python app.py`, hit http://127.0.0.1:8081/health
+**Status:** Phase 4 DONE — trust ledger live, all connectors wired, 606 tests 100% passing
+**Next person needs to:** Pull, run `python app.py`, build frontend against existing endpoints
+**Files changed:** app.py, argus/trust_ledger.py, argus/queue.py, config.py, tests/*
+**Notes:** Run `pip install -r requirements.txt` then `python app.py` (port 8081). Run `python run_tests.py` to verify all green.
 
 ---
 
@@ -23,7 +23,7 @@ Pull first. Push when done. WhatsApp when switching.
 | 1 | Setup — Flask skeleton, SQLite, kernel | DONE |
 | 2 | Permission layer + conflict resolution | DONE |
 | 3 | Approval queue | DONE |
-| 4 | Trust ledger | NOT STARTED |
+| 4 | Trust ledger | DONE |
 | 5 | Gmail integration | NOT STARTED |
 | 6 | Calendar integration | NOT STARTED |
 | 7 | Audit trail | NOT STARTED |
