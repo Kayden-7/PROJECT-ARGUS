@@ -220,6 +220,148 @@ try:
     check('delete -> COMPLETED', e['status'] == 'COMPLETED', got=e['status'])
     check('message trashed (not permanently deleted)', fake.trashed == ['m123'], got=fake.trashed)
 
+    # ══ HACKER ANGLE — adversarial, race conditions, malformed input ══════════
+    sec('[HACKER] Concurrent atomic claim — two reconciles race one job, ONE wins')
+    clean(); fake = FakeGmail(); install_mock(fake)
+    make_approved("email.send.external", {"recipient":"a@b.com","subject":"S","body":"B"})
+    executor.reconcile()  # -> DRAFT_READY
+    eid = one_exec()['execution_id']
+    # Simulate two workers racing the claim on the SAME DRAFT_READY row.
+    now = int(time.time())
+    c = db()
+    a1 = c.execute("UPDATE pending_executions SET status='SENDING', owner_token='W1', updated_at=? "
+                   "WHERE execution_id=? AND status='DRAFT_READY'", (now, eid)).rowcount
+    a2 = c.execute("UPDATE pending_executions SET status='SENDING', owner_token='W2', updated_at=? "
+                   "WHERE execution_id=? AND status='DRAFT_READY'", (now, eid)).rowcount
+    c.commit(); c.close()
+    check('exactly one worker wins the claim (rowcount 1 then 0)', a1 == 1 and a2 == 0, got=(a1,a2))
+    c = db(); tok = c.execute("SELECT owner_token FROM pending_executions WHERE execution_id=?",(eid,)).fetchone()['owner_token']; c.close()
+    check('winner owner_token is the first (W1)', tok == 'W1', got=tok)
+
+    sec('[HACKER] owner_token fence — stale worker cannot overwrite a decision')
+    # Row is SENDING owned by W1. A zombie W2 tries to mark COMPLETED.
+    c = db()
+    bad = c.execute("UPDATE pending_executions SET status='COMPLETED', updated_at=? "
+                    "WHERE execution_id=? AND status='SENDING' AND owner_token='W2'",
+                    (now, eid)).rowcount
+    c.commit(); c.close()
+    check('stale-token completion is rejected (rowcount 0)', bad == 0, got=bad)
+    check('row still SENDING (not hijacked)', one_exec()['status'] == 'SENDING')
+
+    sec('[HACKER] Duplicate approval_id cannot create two executions')
+    clean()
+    now = int(time.time()); c = db()
+    c.execute("INSERT INTO pending_executions (execution_id,approval_id,action_type,payload_json,status,attempt_count,approved_at,execute_after,created_at,updated_at) "
+              "VALUES (?,?,?,?,'DRAFT_PENDING',0,?,?,?,?)",(str(uuid.uuid4()),'DUP','email.send.external','{}',now,now,now,now))
+    c.commit()
+    dup_blocked = False
+    try:
+        c.execute("INSERT INTO pending_executions (execution_id,approval_id,action_type,payload_json,status,attempt_count,approved_at,execute_after,created_at,updated_at) "
+                  "VALUES (?,?,?,?,'DRAFT_PENDING',0,?,?,?,?)",(str(uuid.uuid4()),'DUP','email.send.external','{}',now,now,now,now))
+        c.commit()
+    except sqlite3.IntegrityError:
+        dup_blocked = True
+    c.close()
+    check('UNIQUE(approval_id) blocks a second execution row', dup_blocked)
+
+    sec('[HACKER] Malformed payload_json fails closed (no crash)')
+    clean()
+    now = int(time.time()); eid = str(uuid.uuid4()); c = db()
+    c.execute("INSERT INTO pending_executions (execution_id,approval_id,action_type,payload_json,status,attempt_count,approved_at,execute_after,created_at,updated_at) "
+              "VALUES (?,?,?,?,'DRAFT_PENDING',0,?,?,?,?)",(eid,'aBad','email.send.external','{not valid json',now,now,now,now))
+    c.commit(); c.close()
+    install_mock(FakeGmail())
+    executor.advance_executions()  # must not raise
+    st = one_exec()['status']
+    check('malformed payload does not crash executor', st in ('DRAFT_READY','MANUAL_REVIEW'), got=st)
+
+    sec('[HACKER] email.delete with missing message_id still does not double-process')
+    clean(); fake = FakeGmail(); install_mock(fake)
+    make_approved("email.delete", {})  # no message_id
+    executor.reconcile()
+    e = one_exec()
+    check('delete with empty message_id resolves to a terminal/known state',
+          e['status'] in ('COMPLETED','MANUAL_REVIEW'), got=e['status'])
+
+    sec('[HACKER] Reconcile with Gmail raising (disconnected) -> MANUAL_REVIEW, not crash')
+    clean()
+    class DeadGmail(FakeGmail):
+        def get_history_id(self): raise RuntimeError("not connected")
+        def create_draft(self, *a, **k): raise RuntimeError("not connected")
+    install_mock(DeadGmail())
+    make_approved("email.send.external", {"recipient":"a@b.com","subject":"S","body":"B"})
+    executor.reconcile()  # must not raise
+    check('disconnected Gmail -> MANUAL_REVIEW', one_exec()['status'] == 'MANUAL_REVIEW')
+
+    # ══ STRICT TEACHER ANGLE — exact-match nitpicks ═══════════════════════════
+    sec('[STRICT] Undo-window boundary — promotes exactly AT approved_at+undo')
+    clean()
+    c = db()
+    undo = executor._read_undo_window(c)
+    now = int(time.time())
+    # exactly at boundary: approved_at + undo == now  -> eligible (<=)
+    qid = str(uuid.uuid4())
+    at = now - undo
+    c.execute("INSERT INTO approval_queue (id,proposal_json,decision_json,status,created_at,expires_at,approved_at,updated_at) "
+              "VALUES (?,?,?,'APPROVED',?,?,?,?)",
+              (qid, json.dumps({"action_type":"email.send.external","entities":{"recipient":"a@b.com","subject":"S","body":"B"}}),
+               '{}', at, now+200, at, at))
+    c.commit(); c.close()
+    install_mock(FakeGmail())
+    executor.promote_approved()
+    check('promotes exactly at the boundary (approved_at+undo == now)', one_exec() is not None)
+
+    sec('[STRICT] status_reason is non-empty on every MANUAL_REVIEW')
+    clean()
+    now = int(time.time()); eid = str(uuid.uuid4()); c = db()
+    c.execute("INSERT INTO pending_executions (execution_id,approval_id,action_type,payload_json,status,draft_id,owner_token,attempt_count,approved_at,execute_after,created_at,updated_at) "
+              "VALUES (?,?,?,?,'SENDING',?,?,1,?,?,?,?)",(eid,'aR','email.send.external','{}','d','t',now,now,now,now))
+    c.commit(); c.close()
+    install_mock(FakeGmail()); executor.advance_executions()
+    e = one_exec()
+    check('MANUAL_REVIEW has a non-empty status_reason', bool(e['status_reason']) and len(e['status_reason']) > 0)
+
+    sec('[STRICT] attempt_count increments exactly once per draft attempt')
+    clean(); install_mock(FakeGmail())
+    make_approved("email.send.external", {"recipient":"a@b.com","subject":"S","body":"B"})
+    executor.reconcile()  # one DRAFT_PENDING handling
+    check('attempt_count == 1 after one draft attempt', one_exec()['attempt_count'] == 1, got=one_exec()['attempt_count'])
+
+    sec('[STRICT] trust reason is exactly EXECUTED:<execution_id>:SUCCESS')
+    clean(); install_mock(FakeGmail())
+    make_approved("email.send.external", {"recipient":"a@b.com","subject":"S","body":"B"})
+    executor.reconcile(); executor.reconcile()
+    e = one_exec()
+    c = db(); reason = c.execute("SELECT reason FROM trust_events WHERE reason LIKE 'EXECUTED:%' ORDER BY timestamp DESC LIMIT 1").fetchone()['reason']; c.close()
+    check('trust reason exact format', reason == f"EXECUTED:{e['execution_id']}:SUCCESS", got=reason)
+
+    sec('[STRICT] queue stays APPROVED until COMPLETED, then EXECUTED')
+    clean(); install_mock(FakeGmail())
+    qid = make_approved("email.send.external", {"recipient":"a@b.com","subject":"S","body":"B"})
+    executor.reconcile()  # DRAFT_READY — not yet executed
+    c = db(); s1 = c.execute("SELECT status FROM approval_queue WHERE id=?",(qid,)).fetchone()['status']; c.close()
+    check('queue still APPROVED while execution in flight', s1 == 'APPROVED', got=s1)
+    executor.reconcile()  # COMPLETED
+    c = db(); s2 = c.execute("SELECT status FROM approval_queue WHERE id=?",(qid,)).fetchone()['status']; c.close()
+    check('queue EXECUTED only after completion', s2 == 'EXECUTED', got=s2)
+
+    sec('[STRICT] /api/executions and /api/executions/tick exact response shape')
+    clean(); install_mock(FakeGmail())
+    make_approved("email.send.external", {"recipient":"a@b.com","subject":"S","body":"B"})
+    from app import app as _app
+    cl = _app.test_client()
+    rt = cl.post('/api/executions/tick')
+    jt = rt.get_json()
+    check('tick returns success=True', jt.get('success') is True)
+    check('tick returns a counts dict', isinstance(jt.get('counts'), dict))
+    rl = cl.get('/api/executions')
+    jl = rl.get_json()
+    check('/api/executions returns a list', isinstance(jl, list))
+    if jl:
+        row = jl[0]
+        for f in ('execution_id','approval_id','action_type','status','status_reason'):
+            check(f'/api/executions row has field: {f}', f in row)
+
     clean()
 
 finally:
