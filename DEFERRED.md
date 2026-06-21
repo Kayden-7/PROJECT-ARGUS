@@ -97,6 +97,33 @@ Note: ElevenLabs access arrives June 24 — one day before deadline. Build only 
 
 ---
 
+## Gmail Execution Hardening (Phase 5 — deferred after stress testing)
+
+These were identified across 4 stress-test passes on the Gmail execution layer. For the demo we chose the simpler "fail closed to MANUAL_REVIEW on any uncertainty" approach. These make it production-grade.
+
+### True exactly-once delivery / atomic Gmail+local state
+Currently: Gmail sits outside the SQLite transaction, so we can't make send + local commit atomic. We handle this by failing closed (crashed/ambiguous SENDING → MANUAL_REVIEW, never auto-resume). Production: a proper outbox pattern / distributed transaction coordinator, or a provider that supports idempotency keys.
+
+### Auto-resume of crashed SENDING jobs
+Currently: any crashed SENDING job goes to MANUAL_REVIEW — a human resolves it. Deferred: safe automatic resume requires proving the prior send request never crossed the Gmail boundary (owner liveness detection, request-boundary fencing). Hard problem; not worth it for single-user demo.
+
+### Background worker / continuous reconciliation
+Currently: reconcile-on-read (runs on API calls). If nobody touches the app, nothing executes. Deferred: a real scheduled worker/heartbeat so execution is time-driven, not read-driven. Skipped because background threads on Flask/Replit are flaky and unneeded for a live demo.
+
+### history.list as job-specific send proof
+Currently: historyId + history.list are used only as diagnostic evidence on the MANUAL_REVIEW screen, NOT as proof an action completed. Deferred: a deterministic job→sent-message correlation mechanism (Gmail gives no documented one).
+
+### Full exponential backoff on rate limits
+Currently: on 403/429 we mark the job retryable and reconcile on the next user action (fail closed on doubt). Deferred: proper 1s/2s/4s exponential backoff with Retry-After handling for sustained load. Not load-bearing on a controlled inbox.
+
+### Bounce / delivery-failure as trust signal
+Currently: trust SUCCESS = Gmail accepted + persisted (draft consumed + sent message exists). A 200 does NOT guarantee delivery. Deferred: observe later bounces and record a new FAILURE event at observation time (append-only, links to original via related_event_id). Needs bounce monitoring we don't have for the demo.
+
+### High-contention SQLite / busy-timeout handling
+Currently: single-user, conditional UPDATEs suffice. Deferred: SQLite busy/lock retry tuning, WAL mode, or a real DB for concurrent load. (See also "Full advisory locking" above.)
+
+---
+
 ## Post-Competition Vision
 
 Run ARGUS as a Claude-native tool (not a website). 

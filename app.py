@@ -1,5 +1,13 @@
 import os
 from flask import Flask, jsonify, request
+
+# Load .env so Google OAuth credentials (client id/secret) are available.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from argus.db import close_db, init_db
 
 ERROR_STATUS = {
@@ -179,6 +187,82 @@ def create_app():
         if not result.get("success"):
             return _queue_error(result)
         return jsonify({"success": True, "id": result["id"], "status": result["status"]}), 200
+
+    # ── Phase 5 Part 1: Gmail connection (OAuth + connectivity test) ───────────
+
+    @app.route('/api/gmail/connect')
+    def gmail_connect():
+        # Local dev uses an http redirect URI; allow it for the OAuth exchange.
+        os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
+        from flask import session, redirect
+        from argus.gmail_client import build_auth_flow
+        flow = build_auth_flow()
+        auth_url, state = flow.authorization_url(
+            access_type='offline',          # request a refresh token
+            include_granted_scopes='true',
+            prompt='consent'                # force refresh-token issue on re-consent
+        )
+        session['oauth_state'] = state
+        # PKCE: the code_verifier is generated here and MUST be carried to the
+        # callback, or the token exchange fails with "Missing code verifier".
+        session['oauth_code_verifier'] = flow.code_verifier
+        return redirect(auth_url)
+
+    @app.route('/oauth2callback')
+    def oauth2callback():
+        os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
+        from flask import session
+        from argus.gmail_client import (
+            build_auth_flow, save_credentials_from_flow, get_connected_email
+        )
+        state = session.get('oauth_state')
+        flow = build_auth_flow(state=state)
+        # Restore the PKCE code_verifier captured during /api/gmail/connect.
+        flow.code_verifier = session.get('oauth_code_verifier')
+        try:
+            flow.fetch_token(authorization_response=request.url)
+        except Exception as e:
+            return jsonify({"success": False, "error_code": "OAUTH_FAILED",
+                            "detail": str(e)}), 400
+        save_credentials_from_flow(flow)
+        try:
+            email = get_connected_email()
+        except Exception:
+            email = None
+        return jsonify({"success": True, "connected": True, "email": email,
+                        "message": "Gmail connected. You can close this tab."}), 200
+
+    @app.route('/api/gmail/status')
+    def gmail_status():
+        from argus.gmail_client import is_connected, get_connected_email
+        connected = is_connected()
+        email = None
+        if connected:
+            try:
+                email = get_connected_email()
+            except Exception:
+                connected = False
+        return jsonify({"connected": connected, "email": email}), 200
+
+    @app.route('/api/gmail/test', methods=['POST'])
+    def gmail_test():
+        from argus.gmail_client import is_connected, send_test_email
+        if not is_connected():
+            return jsonify({"success": False, "error_code": "GMAIL_NOT_CONNECTED",
+                            "detail": "Connect Gmail first at /api/gmail/connect"}), 409
+        body = request.get_json(silent=True) or {}
+        to = body.get('to')
+        if not to:
+            return jsonify({"success": False, "error_code": "MISSING_RECIPIENT",
+                            "detail": "Provide 'to' in the request body"}), 400
+        subject = body.get('subject', 'ARGUS test email')
+        message = body.get('body', 'This is a test email sent by ARGUS (Phase 5 Part 1).')
+        try:
+            result = send_test_email(to, subject, message)
+        except Exception as e:
+            return jsonify({"success": False, "error_code": "SEND_FAILED",
+                            "detail": str(e)}), 502
+        return jsonify({"success": True, **result}), 200
 
     # ── Phase 4 Part 3: Trust read endpoint ───────────────────────────────────
 
