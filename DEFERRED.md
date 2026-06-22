@@ -151,6 +151,14 @@ TRUSTED_DOMAINS is a code-owned set today (empty by default; public providers ba
 ### PUBLIC_PROVIDER_DOMAINS is a finite denylist
 A consumer provider not on the list could be added to TRUSTED_DOMAINS later. Config-maintenance concern, not a demo blocker (the demo allowlist is empty/controlled).
 
+## Phase 7 — audit hardening (deferred, demo-acceptable as-is)
+
+- **HMAC / external anchoring of the hash chain.** Current chain is local SHA-256: tamper-evident for retained entries, but a host admin who can replace the DB + recompute hashes is not stopped. An HMAC with a secret stored separately (or anchoring chain heads externally) raises the bar. Honestly framed in `/api/audit/verify` as "internally consistent," not immutable.
+- **Lifecycle-completeness checks.** Chain verification can't detect an *omitted* best-effort write (no event = no broken link). Material pre-execution writes fail closed, but full completeness would cross-check audit events against proposals/queue/executions/trust. Deferred.
+- **Config-change logging** (CONFIG_CHANGED) — policy/template/contact/trusted-domain edits aren't audited yet; replay can't show the exact config in force at decision time. Needs config-mutation endpoints first.
+- **Audit pagination** beyond the bounded limit, and a per-demo-run chain genesis on `/demo/reset` (currently the chain continues across resets).
+- **Scheduled monthly review reminder** — kept on-demand for the demo.
+
 ## Post-Competition Vision
 
 Run ARGUS as a Claude-native tool (not a website). 

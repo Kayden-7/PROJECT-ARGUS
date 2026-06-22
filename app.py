@@ -39,9 +39,29 @@ def create_app():
 
     # ── Phase 2→3 connector ───────────────────────────────────────────────────
 
+    def _audit_decision(correlation, body, decision):
+        from argus.audit import safe_record
+        from argus.safety_filter import classify_recipient
+        recipient = (body.get("entities", {}) or {}).get("recipient", "")
+        payload = {
+            "action_type": body.get("action_type"),
+            "recipient_scope": classify_recipient(recipient) if recipient else None,
+            "candidate_decision": decision.get("candidate_decision", decision.get("decision")),
+            "final_outcome": decision.get("decision"),
+            "decision_source": decision.get("decision_source"),
+            "failure_reason_code": decision.get("failure_reason_code"),
+            "safety_downgrade_reasons": decision.get("safety_downgrade_reasons", []),
+            "trust_at_evaluation": decision.get("trust_at_evaluation"),
+        }
+        safe_record("DECISION_EVALUATED", correlation_id=correlation,
+                    idempotency_key=f"{correlation}:DECISION",
+                    action_type=body.get("action_type"), outcome=decision.get("decision"),
+                    reason=decision.get("failure_reason_code"), payload=payload)
+
     def _route_proposal(body):
         """Shared routing for a proposal dict. Returns (response_dict, status_code).
         Used by POST /api/propose and POST /api/agent/confirm."""
+        import uuid as _uuid
         from argus.kernel import kernel_entry
         from argus.queue import enqueue
 
@@ -70,10 +90,13 @@ def create_app():
                          "decision_dict": {"failure_reason_code": "QUEUE_FAILURE",
                                            "detail": queue_result.get("detail", "")},
                          "queue": None, "trust": None}, 500)
+            # correlation = queue id → links decision ↔ queue transitions ↔ execution.
+            _audit_decision(queue_result["id"], body, decision)
             return ({"success": True, "decision": "GATED", "decision_dict": decision,
                      "queue": {"id": queue_result["id"], "expires_at": queue_result["expires_at"],
                                "status": "PENDING"}, "trust": None}, 200)
 
+        _audit_decision(str(_uuid.uuid4()), body, decision)
         if outcome == "ALLOW":
             from argus.trust_ledger import record_event
             from config import ALL_ACTIONS
@@ -207,6 +230,49 @@ def create_app():
         if not result.get("success"):
             return _queue_error(result)
         return jsonify({"success": True, "id": result["id"], "status": result["status"]}), 200
+
+    # ── Phase 7: Audit trail ──────────────────────────────────────────────────
+
+    @app.route('/api/audit')
+    def audit_list():
+        from argus.audit import recent
+        return jsonify(recent(request.args.get("limit", 100))), 200
+
+    @app.route('/api/audit/verify')
+    def audit_verify():
+        from argus.audit import verify_chain
+        return jsonify(verify_chain()), 200
+
+    @app.route('/api/audit/summary')
+    def audit_summary():
+        from argus.audit import summary
+        return jsonify(summary(request.args.get("since", 0))), 200
+
+    @app.route('/api/audit/replay/<correlation_id>')
+    def audit_replay(correlation_id):
+        from argus.audit import replay
+        return jsonify(replay(correlation_id)), 200
+
+    @app.route('/api/trust/<action_type>/history')
+    def trust_history(action_type):
+        from config import ALL_ACTIONS
+        import sqlite3 as _sql, os as _os
+        if action_type not in ALL_ACTIONS:
+            return jsonify({"success": False, "error_code": "UNKNOWN_ACTION_TYPE"}), 404
+        DB = _os.path.join(_os.path.dirname(__file__), 'instance', 'argus.db')
+        db = _sql.connect(DB); db.row_factory = _sql.Row
+        rows = db.execute(
+            "SELECT timestamp, delta, reason, resulting_trust FROM trust_events "
+            "WHERE action_type=? ORDER BY timestamp ASC, event_id ASC", (action_type,)
+        ).fetchall()
+        db.close()
+        points, prev = [], None
+        for r in rows:
+            points.append({"timestamp": r["timestamp"], "previous_trust": prev,
+                           "delta": r["delta"], "resulting_trust": r["resulting_trust"],
+                           "reason": r["reason"]})
+            prev = r["resulting_trust"]
+        return jsonify({"action_type": action_type, "stepped": True, "points": points}), 200
 
     # ── Phase 5 Part 2: Execution layer (reconcile + view) ────────────────────
 

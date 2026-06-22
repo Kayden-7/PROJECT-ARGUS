@@ -302,6 +302,17 @@ def record_event(action_type: str, outcome: str, severity: str = None, reason: s
         else:
             new_modifier = overall_modifier
 
+        # Phase 7: audit the trust change in the SAME transaction (atomic).
+        try:
+            from argus.audit import record as _audit_record
+            _audit_record("TRUST_CHANGED", correlation_id=event_id,
+                          idempotency_key=f"{event_id}:TRUST", action_type=action_type,
+                          outcome=outcome,
+                          payload={"delta": actual_delta, "resulting_trust": round(trust_after, 4),
+                                   "severity": severity}, db=db)
+        except Exception:
+            pass
+
         db.commit()
         db.close()
 

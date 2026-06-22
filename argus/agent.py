@@ -218,5 +218,13 @@ def run_agent(command):
                 "errors": vr["errors"], **_versions()}
 
     pid = _store_proposal(proposal)
+    try:
+        from argus.audit import safe_record
+        safe_record("AGENT_PROPOSAL", correlation_id=pid, idempotency_key=f"{pid}:AGENT_PROPOSAL",
+                    action_type=action_type, outcome="PROPOSAL",
+                    payload={"action_type": action_type, "has_body": "body" in entities,
+                             "agent_prompt_version": AGENT_PROMPT_VERSION})
+    except Exception:
+        pass
     return {"agent_status": "PROPOSAL", "agent_proposal_id": pid,
             "proposal": proposal, **_versions()}

@@ -105,6 +105,16 @@ The trust gauge is still the visual centrepiece (see Phase 4 section) — but pr
 ### If we have time (frontend)
 - Demo amplification mode — exaggerate visual trust changes for the 3-min demo without changing internal values
 
+### Needs Phase 7 done (audit trail) — "the verifiable in verifiable trust"
+Endpoints LIVE: `GET /api/audit?limit=100` (recent events), `GET /api/audit/verify` (hash-chain check), `GET /api/audit/summary` (the "delegation review"), `GET /api/audit/replay/<correlation_id>` (one decision's full history), `GET /api/trust/<action_type>/history` (stepped trust line graph).
+- **Default view = a chronological "activity ledger,"** NOT a metrics dashboard. Each row answers: what happened? / what did ARGUS decide? / why? / current state? One line, expandable to the decision trace, then a full replay view. Progressive disclosure — never make the user read JSON for a normal action.
+- **Filters by user question**, not internals: All activity / Executed / Needs approval / Blocked / Paused safely / Trust changes.
+- **The "monthly review" = a voluntary "Delegation review"** (`/api/audit/summary`): "X evaluated, Y auto-completed, Z held for approval, N blocked, M paused safely." Framed as *you own the boundaries*, never as grading the user.
+- **"Nothing happened silently"** is a real, scoped claim: show **"All ARGUS-managed actions in this view are accounted for"** (not "everything"). Surface unresolved actions as their own visible state ("Outcome unknown — recorded, no resend attempted") — never hide them under successes or fake a green success.
+- **Verify badge:** `/api/audit/verify` says "internally consistent" — render it honestly ("append-only, tamper-evident"), NOT "immutable" or "everything is safe."
+- **Language:** Recorded / Evaluated / Held for approval / Blocked by rule / Paused safely / Historical decision trace. **Anti-patterns:** no giant "IMMUTABLE" badge without showing the verification, no red/yellow/green risk theatre without a deterministic reason, no moralizing monthly scorecard, no trust-as-game-progress bar, never present GPT-4o's prose as the decision reason (use the stored deterministic trace).
+- The trust timeline (`/api/trust/<action>/history`) should render **stepped**, not smoothed — a smooth curve implies continuous confidence estimation ARGUS doesn't do.
+
 ### Needs Phase 9 done (GPT-4o agent) — the demo centerpiece
 The natural-language front door. Endpoints LIVE: `POST /api/agent/run` ({command}) returns a **proposal, NOT an execution**; `POST /api/agent/confirm` ({agent_proposal_id}) routes it through policy and returns the decision; `POST /demo/reset` (only when server in demo mode).
 - **The trust moment:** show the user's command beside **"here's what I understood"** (the proposal) — labelled **"GPT-4o proposal — not a permission decision."** Then the separate **"ARGUS decision — computed from policy, trust, and safety rules."** Make the two-owner split unmistakable.

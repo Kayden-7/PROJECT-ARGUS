@@ -129,6 +129,17 @@ def _entities(row):
     return proposal.get("entities", {}) or {}
 
 
+def _audit_exec(row, event_type, outcome):
+    """Best-effort execution audit. correlation = approval_id so it links to the
+    decision + queue lifecycle. Idempotency keyed per execution + phase."""
+    from argus.audit import safe_record
+    suffix = "ATTEMPT" if event_type == "EXECUTION_ATTEMPT" else "RESOLVED"
+    safe_record(event_type, correlation_id=row["approval_id"],
+                idempotency_key=f"{row['execution_id']}:{suffix}",
+                action_type=row["action_type"], outcome=outcome,
+                payload={"execution_id": row["execution_id"]})
+
+
 def _recipients_match(gmail_client, draft_id, ent):
     """
     Role-aware pre-send integrity: the live draft's recipients must equal the
@@ -212,11 +223,16 @@ def _advance_draft_action(db, row):
         if affected != 1:
             return  # someone else claimed it
 
+        # Phase 7: audit the attempt — committed (with the SENDING claim above)
+        # BEFORE the Gmail call. A crash now reads as "claimed, unresolved".
+        _audit_exec(row, "EXECUTION_ATTEMPT", "SENDING")
+
         # Re-validate recipients immediately before send (role-aware). Shrinks the
         # check-to-send window; any mutation -> RECIPIENT_MISMATCH -> MANUAL_REVIEW.
         if not _recipients_match(gmail_client, row["draft_id"], ent):
             _to_manual_review(db, execution_id,
                               "RECIPIENT_MISMATCH: draft recipients differ from the approved proposal")
+            _audit_exec(row, "EXECUTION_RESOLVED", "MANUAL_REVIEW")
             return
 
         try:
@@ -227,6 +243,7 @@ def _advance_draft_action(db, row):
             _to_manual_review(db, execution_id,
                               f"Send outcome unknown [{cls['class']}:{cls['sub_reason']}] — "
                               f"not resent. Verify in Gmail Sent folder.")
+            _audit_exec(row, "EXECUTION_RESOLVED", "MANUAL_REVIEW")
             return
         # Fence the completion write by owner_token so a zombie can't overwrite review.
         affected = db.execute(
@@ -238,6 +255,7 @@ def _advance_draft_action(db, row):
         if affected == 1:
             _mark_queue_executed(db, row["approval_id"], execution_id)
             _write_execution_trust(execution_id, row["action_type"], "SUCCESS")
+            _audit_exec(row, "EXECUTION_RESOLVED", "COMPLETED")
         return
 
     if status == "SENDING":

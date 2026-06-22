@@ -111,6 +111,10 @@ def approve(item_id: str) -> dict:
         if affected == 0:
             return _invalid_transition("APPROVE", current)
 
+        from argus.audit import safe_record
+        safe_record("QUEUE_TRANSITIONED", correlation_id=item_id,
+                    idempotency_key=f"{item_id}:APPROVED", outcome="APPROVED",
+                    payload={"from": current, "to": "APPROVED"})
         return {
             "success":       True,
             "id":            item_id,
@@ -151,6 +155,10 @@ def reject(item_id: str, reason: str = "Rejected by user") -> dict:
         if affected == 0:
             return _invalid_transition("REJECT", current)
 
+        from argus.audit import safe_record
+        safe_record("QUEUE_TRANSITIONED", correlation_id=item_id,
+                    idempotency_key=f"{item_id}:REJECTED", outcome="REJECTED",
+                    payload={"from": current, "to": "REJECTED"})
         return {
             "success":       True,
             "id":            item_id,
@@ -201,6 +209,10 @@ def cancel(item_id: str) -> dict:
         if affected == 0:
             return _invalid_transition("CANCEL", current)
 
+        from argus.audit import safe_record
+        safe_record("QUEUE_TRANSITIONED", correlation_id=item_id,
+                    idempotency_key=f"{item_id}:CANCELLED", outcome="CANCELLED",
+                    payload={"from": current, "to": "CANCELLED"})
         return {"success": True, "id": item_id, "status": "CANCELLED"}
     except Exception as e:
         return {"success": False, "error_code": "DB_ERROR", "detail": str(e)}

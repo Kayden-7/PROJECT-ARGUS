@@ -133,6 +133,29 @@ def init_db():
             body TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS audit_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,  -- monotonic ordering key
+            timestamp       INTEGER NOT NULL,
+            event_type      TEXT NOT NULL,
+            correlation_id  TEXT,
+            action_type     TEXT,
+            outcome         TEXT,
+            reason          TEXT,
+            idempotency_key TEXT UNIQUE,   -- source-event key; prevents duplicate mirrors
+            payload_json    TEXT NOT NULL, -- canonical, code-owned (no user/model text)
+            prev_entry_hash TEXT,
+            entry_hash      TEXT NOT NULL
+        );
+
+        -- Append-only + tamper-evident: reject any UPDATE/DELETE on the audit log.
+        CREATE TRIGGER IF NOT EXISTS audit_no_update
+        BEFORE UPDATE ON audit_events
+        BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END;
+
+        CREATE TRIGGER IF NOT EXISTS audit_no_delete
+        BEFORE DELETE ON audit_events
+        BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END;
+
         CREATE TABLE IF NOT EXISTS agent_proposals (
             id            TEXT PRIMARY KEY,
             proposal_json TEXT NOT NULL,
