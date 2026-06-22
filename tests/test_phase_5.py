@@ -75,10 +75,13 @@ class FakeGmail:
             raise RuntimeError("create boom")
         self.next_draft += 1
         did = f"draft{self.next_draft}"
-        self.drafts[did] = True
+        self.drafts[did] = {"to": [to] if to else [], "cc": [], "bcc": []}
         return did
 
     def draft_exists(self, draft_id): return draft_id in self.drafts
+
+    def get_draft_recipients(self, draft_id):
+        return self.drafts.get(draft_id, {"to": [], "cc": [], "bcc": []})
 
     def send_draft(self, draft_id):
         if self.fail_send:
@@ -93,7 +96,8 @@ class FakeGmail:
         self.trashed.append(message_id); return {"message_id": message_id, "trashed": True}
 
 def install_mock(fake):
-    for name in ("get_history_id","create_draft","draft_exists","send_draft","trash_message"):
+    for name in ("get_history_id","create_draft","draft_exists","get_draft_recipients",
+                 "send_draft","trash_message"):
         setattr(gmail_client, name, getattr(fake, name))
 
 

@@ -383,21 +383,21 @@ try:
           r_dampened['actual_delta'] < delta_undampened)
 
     sec('F4: Trust → Policy Engine Pipeline')
-    # Drive email.send.internal trust above Balanced threshold via record_event
-    db_exec("DELETE FROM trust_events WHERE action_type='email.send.internal'")
-    db_exec("UPDATE trust_current SET trust_current=40.0, damping_remaining=0, damping_streak=0 WHERE action_type='email.send.internal'")
+    # Use email.reply: it is NOT safety-filtered, so the trust pipeline's ALLOW
+    # survives end-to-end (send/forward/delete would be downgraded by Part 4).
+    db_exec("DELETE FROM trust_events WHERE action_type='email.reply'")
+    db_exec("UPDATE trust_current SET trust_current=40.0, damping_remaining=0, damping_streak=0 WHERE action_type='email.reply'")
     db_exec("UPDATE system_state SET value='1.0' WHERE key='OVERALL_TRUST_MODIFIER'")
     set_profile('Balanced')
 
-    r_before = propose({'action_type': 'email.send.internal',
-                        'entities': {'recipient': 'c@c.com', 'subject': 'S', 'body': 'B'}})
-    check('email.send.internal: GATED at trust=40 (below 70)', r_before.json()['decision'] == 'GATED')
+    r_before = propose({'action_type': 'email.reply',
+                        'entities': {'recipient': 'c@c.com', 'body': 'B'}})
+    check('email.reply: GATED at trust=40 (below 70)', r_before.json()['decision'] == 'GATED')
 
-    # Drive trust above threshold by writing directly to trust_current (bypass record_event weight math)
-    set_trust('email.send.internal', 72.0)
-    r_after = propose({'action_type': 'email.send.internal',
-                       'entities': {'recipient': 'c@c.com', 'subject': 'S', 'body': 'B'}})
-    check('email.send.internal: ALLOW at trust=72 (above 70)', r_after.json()['decision'] == 'ALLOW')
+    set_trust('email.reply', 72.0)
+    r_after = propose({'action_type': 'email.reply',
+                       'entities': {'recipient': 'c@c.com', 'body': 'B'}})
+    check('email.reply: ALLOW at trust=72 (above 70)', r_after.json()['decision'] == 'ALLOW')
 
     # ══════════════════════════════════════════════════════════════════
     # SECTION G — CHAOS: Break One Area, Observe System
@@ -545,13 +545,15 @@ try:
     check('Proposals work normally after toggle cycles', r.json()['decision'] == 'ALLOW')
 
     sec('H4: High-Trust Action Auto-Approve Cannot Be Bypassed By Hard Stop Race')
-    set_profile('Autonomous')   # threshold=40, trust=40 → ALLOW
-    set_trust('email.delete', 42.0)
-    r1 = propose({'action_type': 'email.delete', 'entities': {'email_id': 'e1'}})
+    # email.reply is not safety-filtered, so trust>=threshold genuinely auto-ALLOWs;
+    # this isolates the hard-stop-overrides-ALLOW behaviour (delete is now safety-gated).
+    set_profile('Autonomous')   # threshold=40
+    set_trust('email.reply', 50.0)
+    r1 = propose({'action_type': 'email.reply', 'entities': {'recipient': 'a@b.com', 'body': 'ok'}})
     kset_hard_stop(True)
-    r2 = propose({'action_type': 'email.delete', 'entities': {'email_id': 'e2'}})
+    r2 = propose({'action_type': 'email.reply', 'entities': {'recipient': 'a@b.com', 'body': 'ok'}})
     kset_hard_stop(False)
-    check('Pre-stop: trust=42 ALLOW on Autonomous',   r1.json()['decision'] == 'ALLOW')
+    check('Pre-stop: trust=50 ALLOW on Autonomous',   r1.json()['decision'] == 'ALLOW')
     check('Post-stop: same proposal BLOCK (hard stop wins)', r2.json()['decision'] == 'BLOCK')
     set_profile('Balanced')
 

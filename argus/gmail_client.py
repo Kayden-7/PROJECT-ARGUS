@@ -188,6 +188,64 @@ def send_draft(draft_id):
 
 # ── Idempotent ops (safe to replay) ──────────────────────────────────────────
 
+def get_draft_recipients(draft_id):
+    """Read a draft's recipients by role for the pre-send integrity check."""
+    service = get_service()
+    d = service.users().drafts().get(userId='me', id=draft_id, format='metadata').execute()
+    headers = d.get('message', {}).get('payload', {}).get('headers', [])
+    roles = {'to': [], 'cc': [], 'bcc': []}
+    for h in headers:
+        name = (h.get('name') or '').lower()
+        if name in roles:
+            roles[name] = [a.strip() for a in (h.get('value') or '').split(',') if a.strip()]
+    return roles
+
+
+# ── Error classification (Part 4) ────────────────────────────────────────────
+
+_RATE_REASONS = {"rateLimitExceeded", "userRateLimitExceeded",
+                 "dailyLimitExceeded", "quotaExceeded"}
+
+
+def _gmail_reason(exc):
+    try:
+        import json as _json
+        data = _json.loads(exc.content.decode("utf-8"))
+        return data.get("error", {}).get("errors", [{}])[0].get("reason", "")
+    except Exception:
+        return ""
+
+
+def classify_gmail_error(operation, exc):
+    """
+    Classify a Gmail failure by OPERATION + request boundary, not status alone.
+    operation: 'SEND' (drafts.send invoked) | 'PRE_SEND' (create/read/validate).
+
+    Any uncertain result AFTER invoking drafts.send is UNKNOWN_DELIVERY_STATE
+    regardless of status — never assumed "not sent", never auto-retried.
+    Returns {"class": ..., "sub_reason": ...}.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None) if isinstance(exc, HttpError) else None
+
+    if operation == "SEND":
+        sub = f"GMAIL_SEND_{status}" if status else "GMAIL_SEND_NO_RESPONSE"
+        return {"class": "UNKNOWN_DELIVERY_STATE", "sub_reason": sub}
+
+    # PRE_SEND: confirmed no send side effect yet.
+    if status == 429:
+        return {"class": "TRANSIENT_SAFE_TO_RETRY", "sub_reason": "GMAIL_429_RATE_LIMIT"}
+    if status == 403:
+        reason = _gmail_reason(exc)
+        if reason in _RATE_REASONS:
+            return {"class": "TRANSIENT_SAFE_TO_RETRY", "sub_reason": f"GMAIL_403_{reason}"}
+        return {"class": "PERMANENT", "sub_reason": "GMAIL_403_PERMISSION"}
+    if status in (400, 401, 404):
+        return {"class": "PERMANENT", "sub_reason": f"GMAIL_{status}"}
+    if status and 500 <= status < 600:
+        return {"class": "TRANSIENT_SAFE_TO_RETRY", "sub_reason": f"GMAIL_{status}_SERVER"}
+    return {"class": "UNKNOWN", "sub_reason": "GMAIL_UNMAPPED"}
+
+
 def trash_message(message_id):
     """Move a message to trash (reversible, inspectable). Never permanent delete."""
     service = get_service()

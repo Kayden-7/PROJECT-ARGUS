@@ -129,6 +129,34 @@ def _entities(row):
     return proposal.get("entities", {}) or {}
 
 
+def _recipients_match(gmail_client, draft_id, ent):
+    """
+    Role-aware pre-send integrity: the live draft's recipients must equal the
+    approved proposal's. Approved set = the single proposal recipient in To,
+    no Cc, no Bcc. Any role change / extra / missing / parse failure -> mismatch.
+    On a read error we fail closed (treat as mismatch -> MANUAL_REVIEW).
+    """
+    from email.utils import parseaddr
+    try:
+        roles = gmail_client.get_draft_recipients(draft_id)
+    except Exception:
+        return False
+    def _addrs(values):
+        out = []
+        for v in values or []:
+            _n, a = parseaddr(v)
+            if a:
+                out.append(a.strip().lower())
+        return sorted(out)
+    expected_to = sorted([parseaddr(ent.get("recipient", ""))[1].strip().lower()]) \
+        if ent.get("recipient") else []
+    if _addrs(roles.get("to")) != expected_to:
+        return False
+    if _addrs(roles.get("cc")) or _addrs(roles.get("bcc")):
+        return False
+    return True
+
+
 def _advance_draft_action(db, row):
     from argus import gmail_client
     execution_id = row["execution_id"]
@@ -160,7 +188,9 @@ def _advance_draft_action(db, row):
                 in_reply_to=ent.get("in_reply_to"),
             )
         except Exception as e:
-            _to_manual_review(db, execution_id, f"Draft creation failed: {str(e)[:200]}")
+            cls = gmail_client.classify_gmail_error("PRE_SEND", e)
+            _to_manual_review(db, execution_id,
+                              f"Draft creation failed [{cls['class']}:{cls['sub_reason']}]: {str(e)[:160]}")
             return
         db.execute(
             "UPDATE pending_executions SET draft_id=?, history_id=?, status='DRAFT_READY', "
@@ -181,11 +211,22 @@ def _advance_draft_action(db, row):
         db.commit()
         if affected != 1:
             return  # someone else claimed it
+
+        # Re-validate recipients immediately before send (role-aware). Shrinks the
+        # check-to-send window; any mutation -> RECIPIENT_MISMATCH -> MANUAL_REVIEW.
+        if not _recipients_match(gmail_client, row["draft_id"], ent):
+            _to_manual_review(db, execution_id,
+                              "RECIPIENT_MISMATCH: draft recipients differ from the approved proposal")
+            return
+
         try:
             result = gmail_client.send_draft(row["draft_id"])
         except Exception as e:
-            # We don't know if the send crossed the Gmail boundary -> fail closed.
-            _to_manual_review(db, execution_id, f"Send ambiguous/failed: {str(e)[:200]}")
+            # Any uncertainty after invoking drafts.send -> UNKNOWN_DELIVERY_STATE.
+            cls = gmail_client.classify_gmail_error("SEND", e)
+            _to_manual_review(db, execution_id,
+                              f"Send outcome unknown [{cls['class']}:{cls['sub_reason']}] — "
+                              f"not resent. Verify in Gmail Sent folder.")
             return
         # Fence the completion write by owner_token so a zombie can't overwrite review.
         affected = db.execute(

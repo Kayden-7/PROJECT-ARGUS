@@ -105,6 +105,16 @@ The trust gauge is still the visual centrepiece (see Phase 4 section) — but pr
 ### If we have time (frontend)
 - Demo amplification mode — exaggerate visual trust changes for the 3-min demo without changing internal values
 
+### Needs Phase 5 Part 4 done (safety filter) — framing matters a LOT here
+ARGUS now downgrades certain actions to "always needs your approval" **regardless of how much trust the AI has earned** (delete, external forward, send to a recipient whose domain isn't on the trusted list, anything with Bcc). The UI framing is the whole point:
+- Frame these as **delegation boundaries, not limitations or low confidence.** ARGUS has *defined* autonomy, not unlimited autonomy.
+- The key trust phrase to show: **"requires your approval regardless of trust level."** This stops the user reading the hold as "the AI isn't trusted enough."
+- **Distinguish two kinds of hold:** trust-based gate ("not yet earned") vs safety-boundary gate ("even a trusted delegate needs you for this"). The decision carries `failure_reason_code` starting with `SAFETY_DOWNGRADE_*` and `candidate_decision: "ALLOW"` for the safety kind.
+- Reason codes to render: `SAFETY_DOWNGRADE_DELETE`, `SAFETY_DOWNGRADE_EXTERNAL_FORWARD`, `SAFETY_DOWNGRADE_UNRECOGNIZED_DOMAIN`, `SAFETY_DOWNGRADE_BCC`, `SAFETY_DOWNGRADE_MALFORMED_RECIPIENT`, `SAFETY_DOWNGRADE_NEW_RECIPIENTS`.
+- For the unrecognized-domain case, say: "Recipient domain is not on your trusted-domain list" (NOT "unknown/new domain" — ARGUS has no history model).
+- Execution/error states carry specific reasons too: `RECIPIENT_MISMATCH` (draft changed before send), `UNKNOWN_DELIVERY_STATE` (Gmail uncertain — "Delivery status unresolved, not resent"). Use precise categories — **Approval required / Paused safely / Delivery status unresolved / Retry eligible** — and reserve "failed" for a confirmed permanent failure.
+- **Anti-patterns:** no "ARGUS protected you!" banners for routine gating, no red danger styling, no anthropomorphism ("ARGUS felt unsure"), no confidence score beside a safety hold, never hide an ambiguous Gmail outcome behind a green success.
+
 ### Needs Phase 5 done (Gmail execution) — endpoints now live
 - **Execution status panel** — `GET /api/executions` lists every execution with its state: `DRAFT_PENDING → DRAFT_READY → SENDING → COMPLETED`, or `MANUAL_REVIEW`. Show as a small pipeline/status chip per item.
 - **MANUAL_REVIEW surface (important)** — when an execution hits `MANUAL_REVIEW`, surface it prominently with its `status_reason` (e.g. "Crashed during send — verify in Gmail Sent folder"). This is ARGUS's core trust behaviour: *on any uncertainty it stops and asks the human, never silently double-sends or loses an email.* Make this visible and reassuring, not alarming.

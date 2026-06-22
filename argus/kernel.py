@@ -55,4 +55,11 @@ def kernel_entry(proposal: dict) -> dict:
             "modifier_breakdown":  {},
         }
 
-    return evaluate(result["sanitized_proposal"])
+    sanitized = result["sanitized_proposal"]
+    decision = evaluate(sanitized)
+
+    # ── Layer 7: Safety Downgrade Filter (one-way ALLOW→GATED) ────────────────
+    # Runs after the hierarchy, before execution. Certain high-impact actions
+    # always require human approval regardless of trust. Never grants.
+    from argus.safety_filter import apply_safety_filter
+    return apply_safety_filter(sanitized, decision)

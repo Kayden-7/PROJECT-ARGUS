@@ -268,8 +268,10 @@ try:
     db.commit()
     db.close()
 
-    r = kern({'action_type': 'email.send.external',
-              'entities': {'recipient': 'trusted@partner.com', 'subject': 'hi', 'body': 'hello'}})
+    # evaluate() = pure policy layer (the trust check under test). The Part-4 safety
+    # filter, applied in kernel_entry, separately downgrades an untrusted send.
+    r = evaluate({'action_type': 'email.send.external',
+                  'entities': {'recipient': 'trusted@partner.com', 'subject': 'hi', 'body': 'hello'}})
     check('Contact permission relaxes threshold -> ALLOW for trusted contact', r['decision'] == 'ALLOW')
 
     r2 = kern({'action_type': 'email.send.external',
@@ -298,8 +300,8 @@ try:
     db.execute("UPDATE trust_current SET trust_current=80.0 WHERE action_type='email.send.external'")
     db.commit()
     db.close()
-    r = kern({'action_type': 'email.send.external',
-              'entities': {'recipient': 'a@b.com', 'subject': 'hi', 'body': 'hello'}})
+    r = evaluate({'action_type': 'email.send.external',
+                  'entities': {'recipient': 'a@b.com', 'subject': 'hi', 'body': 'hello'}})
     check('trust 80 >= threshold 70 -> ALLOW', r['decision'] == 'ALLOW')
     check('ALLOW trust_impact = pending_positive', r.get('trust_impact') == 'pending_positive')
 
@@ -360,8 +362,8 @@ try:
     db.commit()
     db.close()
 
-    r = kern({'action_type': 'email.send.external',
-              'entities': {'recipient': 'a@b.com', 'subject': 'hi', 'body': 'hello'}})
+    r = evaluate({'action_type': 'email.send.external',
+                  'entities': {'recipient': 'a@b.com', 'subject': 'hi', 'body': 'hello'}})
     check('Autonomous profile: trust=40 >= threshold=40 -> ALLOW', r['decision'] == 'ALLOW')
 
     # Restore

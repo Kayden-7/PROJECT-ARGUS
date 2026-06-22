@@ -20,6 +20,7 @@ SUITES = [
     ('Phase 4 -- Trust Ledger',            'tests/test_phase_4.py'),
     ('Phase 5 -- Gmail Execution',         'tests/test_phase_5.py'),
     ('Phase 5b -- Message Templates',      'tests/test_templates.py'),
+    ('Phase 5c -- Safety Filter + Errors', 'tests/test_safety_filter.py'),
     ('Integration -- Cross-Phase + Chaos', 'tests/test_integration.py'),
 ]
 
@@ -30,7 +31,8 @@ SUITE_SHORTCUTS = {
     'phase4':      3,
     'phase5':      4,
     'templates':   5,
-    'integration': 6,
+    'safety':      6,
+    'integration': 7,
 }
 
 GREEN  = '\033[92m'

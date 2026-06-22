@@ -140,6 +140,17 @@ Minor items from the Part 3 confirmation pass (✔, both flagged non-critical fo
 - **avoid_phrases normalization** — current check is lowercase substring match. Could be evaded by whitespace/punctuation/Unicode variants. Add deterministic normalization if it ever matters.
 - **renderer_version on the snapshot** — the pinned snapshot stores enum settings; if the render code changes later, the same snapshot could render differently. Store a renderer_version (or the already-rendered block) for audit reproducibility. Only matters if renderer changes while proposals are pending.
 
+## Phase 5 Part 4 — known limitations (documented, accepted for demo)
+
+### Check-to-send draft mutation race
+ARGUS re-validates a draft's recipients (role-aware: To/Cc/Bcc) immediately before `drafts.send`, which shrinks the window. But Gmail offers no atomic "send this exact draft version" primitive, so a concurrent external edit between the re-validation and the send is not fully preventable. Accepted because: ARGUS-created drafts are treated as system-owned and the demo is single-user. NOT claimed as tamper-proof recipient integrity. Production fix would need an atomic validate-and-send or provider-side draft locking.
+
+### Trusted-domain management UI
+TRUSTED_DOMAINS is a code-owned set today (empty by default; public providers barred at config time via validate_trusted_domain). A real product needs a managed settings surface to add/remove trusted domains, with the public-provider rejection enforced server-side on every path.
+
+### PUBLIC_PROVIDER_DOMAINS is a finite denylist
+A consumer provider not on the list could be added to TRUSTED_DOMAINS later. Config-maintenance concern, not a demo blocker (the demo allowlist is empty/controlled).
+
 ## Post-Competition Vision
 
 Run ARGUS as a Claude-native tool (not a website). 
