@@ -370,4 +370,6 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8081, debug=True)
+    # Replit (and most PaaS) inject the port via $PORT; fall back to 8081 locally.
+    port = int(os.environ.get('PORT', 8081))
+    app.run(host='0.0.0.0', port=port, debug=True)
