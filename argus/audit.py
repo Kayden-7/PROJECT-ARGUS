@@ -67,6 +67,7 @@ def record(event_type, correlation_id=None, idempotency_key=None,
     its source mutation. Duplicate idempotency_key → no-op.
     """
     own = db is None
+    began = False
     if own:
         # Own connection: serialize the read-prev + insert with BEGIN IMMEDIATE so
         # two concurrent writers can't both chain off the same hash (no fork).
@@ -75,14 +76,15 @@ def record(event_type, correlation_id=None, idempotency_key=None,
         try:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("BEGIN IMMEDIATE")
+            began = True
         except Exception:
-            pass
+            began = False  # fall back to autocommit; statements persist individually
     else:
         conn = db  # caller's transaction already holds the write lock → serialized
     try:
         if idempotency_key and conn.execute(
                 "SELECT 1 FROM audit_events WHERE idempotency_key=?", (idempotency_key,)).fetchone():
-            if own:
+            if began:
                 conn.execute("COMMIT")
             return {"recorded": False, "reason": "duplicate"}
         if idempotency_key is None:
@@ -100,11 +102,11 @@ def record(event_type, correlation_id=None, idempotency_key=None,
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (now, event_type, correlation_id, action_type, outcome, reason,
              idempotency_key, canon, prev_hash, entry_hash))
-        if own:
-            conn.execute("COMMIT")
+        if began:
+            conn.execute("COMMIT")  # autocommit fallback already persisted the row
         return {"recorded": True, "entry_hash": entry_hash}
     except Exception as e:
-        if own:
+        if began:
             try:
                 conn.execute("ROLLBACK")
             except Exception:

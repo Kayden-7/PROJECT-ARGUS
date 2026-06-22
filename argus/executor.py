@@ -223,9 +223,17 @@ def _advance_draft_action(db, row):
         if affected != 1:
             return  # someone else claimed it
 
-        # Phase 7: audit the attempt — committed (with the SENDING claim above)
-        # BEFORE the Gmail call. A crash now reads as "claimed, unresolved".
-        _audit_exec(row, "EXECUTION_ATTEMPT", "SENDING")
+        # Phase 7: audit the attempt BEFORE the Gmail call — FAIL CLOSED. If the
+        # attempt can't be recorded, do not send (per the audit design contract).
+        from argus.audit import record as _audit_record
+        att = _audit_record("EXECUTION_ATTEMPT", correlation_id=row["approval_id"],
+                            idempotency_key=f"{execution_id}:ATTEMPT",
+                            action_type=row["action_type"], outcome="SENDING",
+                            payload={"execution_id": execution_id})
+        if not att.get("recorded") and att.get("reason") != "duplicate":
+            _to_manual_review(db, execution_id,
+                              "Execution attempt could not be audited — not sent (fail-closed).")
+            return
 
         # Re-validate recipients immediately before send (role-aware). Shrinks the
         # check-to-send window; any mutation -> RECIPIENT_MISMATCH -> MANUAL_REVIEW.
