@@ -84,3 +84,15 @@ OWN_PRIVATE_DOMAIN = None
 # Exact-match trusted-domain allowlist. Public providers are barred (enforced in
 # safety_filter). Empty by default → every external recipient is gated.
 TRUSTED_DOMAINS = set()
+
+# ── Phase 9: GPT-4o agent layer ───────────────────────────────────────────────
+import os as _os
+AGENT_MODEL          = "gpt-4o"
+AGENT_PROMPT_VERSION = "v1"
+TAXONOMY_VERSION     = "2026-06-22"
+AGENT_MAX_COMMAND_LEN = 2000
+# Demo mode is process-owned server config (never a request flag). /demo/reset
+# fails closed unless this is set at startup.
+DEMO_MODE = _os.environ.get("ARGUS_DEMO_MODE") == "1"
+# Email actions that draft a body (two-pass: extract → resolve template → draft).
+DRAFTING_ACTIONS = {"email.reply", "email.send.external", "email.send.internal", "email.compose"}

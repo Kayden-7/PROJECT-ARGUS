@@ -39,89 +39,103 @@ def create_app():
 
     # ── Phase 2→3 connector ───────────────────────────────────────────────────
 
-    @app.route('/api/propose', methods=['POST'])
-    def propose():
+    def _route_proposal(body):
+        """Shared routing for a proposal dict. Returns (response_dict, status_code).
+        Used by POST /api/propose and POST /api/agent/confirm."""
         from argus.kernel import kernel_entry
         from argus.queue import enqueue
 
-        body = request.get_json(silent=True)
         if not body or not isinstance(body, dict):
-            return jsonify({
-                "success": False, "decision": "BLOCK",
-                "decision_dict": {"failure_reason_code": "MISSING_BODY"},
-                "queue": None, "trust": None
-            }), 400
-
+            return ({"success": False, "decision": "BLOCK",
+                     "decision_dict": {"failure_reason_code": "MISSING_BODY"},
+                     "queue": None, "trust": None}, 400)
         try:
             decision = kernel_entry(body)
         except Exception as e:
-            return jsonify({
-                "success": False, "decision": "BLOCK",
-                "decision_dict": {"failure_reason_code": "INTERNAL_ERROR", "detail": str(e)},
-                "queue": None, "trust": None
-            }), 500
+            return ({"success": False, "decision": "BLOCK",
+                     "decision_dict": {"failure_reason_code": "INTERNAL_ERROR", "detail": str(e)},
+                     "queue": None, "trust": None}, 500)
 
         outcome      = decision.get("decision")
         failure_type = decision.get("failure_type")
 
-        # Validation BLOCK → 400 (bad input, not a policy decision)
         if outcome == "BLOCK" and failure_type == "VALIDATION":
-            return jsonify({
-                "success": True, "decision": "BLOCK",
-                "decision_dict": decision, "queue": None, "trust": None
-            }), 400
+            return ({"success": True, "decision": "BLOCK",
+                     "decision_dict": decision, "queue": None, "trust": None}, 400)
 
-        # GATED → enqueue; if enqueue fails → fail closed as BLOCK
         if outcome == "GATED":
             queue_result = enqueue(body, decision)
             if not queue_result.get("success"):
-                return jsonify({
-                    "success": False, "decision": "BLOCK",
-                    "decision_dict": {"failure_reason_code": "QUEUE_FAILURE",
-                                      "detail": queue_result.get("detail", "")},
-                    "queue": None, "trust": None
-                }), 500
-            return jsonify({
-                "success": True, "decision": "GATED",
-                "decision_dict": decision,
-                "queue": {
-                    "id":         queue_result["id"],
-                    "expires_at": queue_result["expires_at"],
-                    "status":     "PENDING"
-                },
-                "trust": None
-            }), 200
+                return ({"success": False, "decision": "BLOCK",
+                         "decision_dict": {"failure_reason_code": "QUEUE_FAILURE",
+                                           "detail": queue_result.get("detail", "")},
+                         "queue": None, "trust": None}, 500)
+            return ({"success": True, "decision": "GATED", "decision_dict": decision,
+                     "queue": {"id": queue_result["id"], "expires_at": queue_result["expires_at"],
+                               "status": "PENDING"}, "trust": None}, 200)
 
-        # ALLOW → Phase 2→4 connector: record trust event for FREE action
-        # FREE actions are executed immediately on ALLOW (no separate execution phase),
-        # so trust writes here correctly reflect actual execution outcome.
         if outcome == "ALLOW":
             from argus.trust_ledger import record_event
             from config import ALL_ACTIONS
             action_type = body.get("action_type", "")
             if action_type not in ALL_ACTIONS:
-                return jsonify({
-                    "success": True, "decision": "ALLOW",
-                    "decision_dict": decision, "queue": None, "trust": None
-                }), 200
-            trust_result = record_event(action_type, "SUCCESS", reason="FREE_ACTION:ALLOW")
+                return ({"success": True, "decision": "ALLOW",
+                         "decision_dict": decision, "queue": None, "trust": None}, 200)
+            tr = record_event(action_type, "SUCCESS", reason="FREE_ACTION:ALLOW")
             trust_field = {
-                "event_created": trust_result.get("success", False),
-                "event_id":      trust_result.get("event_id"),
-                "trust_before":  trust_result.get("trust_before"),
-                "trust_after":   trust_result.get("trust_after"),
-                "actual_delta":  trust_result.get("actual_delta"),
+                "event_created": tr.get("success", False), "event_id": tr.get("event_id"),
+                "trust_before": tr.get("trust_before"), "trust_after": tr.get("trust_after"),
+                "actual_delta": tr.get("actual_delta"),
             }
-            return jsonify({
-                "success": True, "decision": "ALLOW",
-                "decision_dict": decision, "queue": None, "trust": trust_field
-            }), 200
+            return ({"success": True, "decision": "ALLOW",
+                     "decision_dict": decision, "queue": None, "trust": trust_field}, 200)
 
-        # Policy BLOCK (Prime Rule, Hard Stop, Gate) → 200
-        return jsonify({
-            "success": True, "decision": "BLOCK",
-            "decision_dict": decision, "queue": None, "trust": None
-        }), 200
+        return ({"success": True, "decision": "BLOCK",
+                 "decision_dict": decision, "queue": None, "trust": None}, 200)
+
+    @app.route('/api/propose', methods=['POST'])
+    def propose():
+        resp, code = _route_proposal(request.get_json(silent=True))
+        return jsonify(resp), code
+
+    # ── Phase 9: GPT-4o agent layer ───────────────────────────────────────────
+
+    @app.route('/api/agent/run', methods=['POST'])
+    def agent_run():
+        # Interprets only — never executes. Returns a canonical proposal to confirm.
+        from argus.agent import run_agent
+        body = request.get_json(silent=True) or {}
+        command = body.get("command", "")
+        try:
+            result = run_agent(command)
+        except Exception as e:
+            return jsonify({"agent_status": "AGENT_UNAVAILABLE", "detail": str(e)}), 500
+        return jsonify(result), 200
+
+    @app.route('/api/agent/confirm', methods=['POST'])
+    def agent_confirm():
+        # Confirm submits the SERVER-STORED canonical proposal by id; /api/propose
+        # logic re-validates and decides. Unknown/consumed id → never executes.
+        from argus.agent import load_proposal, mark_consumed
+        body = request.get_json(silent=True) or {}
+        pid = body.get("agent_proposal_id", "")
+        proposal = load_proposal(pid)
+        if proposal is None:
+            return jsonify({"success": False, "error_code": "PROPOSAL_NOT_FOUND",
+                            "detail": "unknown, consumed, or expired proposal"}), 404
+        mark_consumed(pid)
+        resp, code = _route_proposal(proposal)
+        return jsonify(resp), code
+
+    @app.route('/demo/reset', methods=['POST'])
+    def demo_reset():
+        # Fails closed unless the process was started with ARGUS_DEMO_MODE=1.
+        from config import DEMO_MODE
+        if not DEMO_MODE:
+            return jsonify({"success": False, "error_code": "DEMO_MODE_DISABLED",
+                            "detail": "Reset is only available when the server runs in demo mode."}), 403
+        from argus.demo import reset_demo
+        return jsonify(reset_demo()), 200
 
     # ── Approval queue endpoints ───────────────────────────────────────────────
 

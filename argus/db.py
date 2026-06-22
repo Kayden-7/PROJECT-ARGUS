@@ -133,6 +133,14 @@ def init_db():
             body TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS agent_proposals (
+            id            TEXT PRIMARY KEY,
+            proposal_json TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'PROPOSAL'
+                          CHECK(status IN ('PROPOSAL','CONSUMED')),
+            created_at    INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS email_templates (
             id             TEXT PRIMARY KEY,
             contact        TEXT,          -- canonical recipient email; NULL = any

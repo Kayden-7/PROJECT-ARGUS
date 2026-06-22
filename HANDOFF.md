@@ -105,6 +105,15 @@ The trust gauge is still the visual centrepiece (see Phase 4 section) — but pr
 ### If we have time (frontend)
 - Demo amplification mode — exaggerate visual trust changes for the 3-min demo without changing internal values
 
+### Needs Phase 9 done (GPT-4o agent) — the demo centerpiece
+The natural-language front door. Endpoints LIVE: `POST /api/agent/run` ({command}) returns a **proposal, NOT an execution**; `POST /api/agent/confirm` ({agent_proposal_id}) routes it through policy and returns the decision; `POST /demo/reset` (only when server in demo mode).
+- **The trust moment:** show the user's command beside **"here's what I understood"** (the proposal) — labelled **"GPT-4o proposal — not a permission decision."** Then the separate **"ARGUS decision — computed from policy, trust, and safety rules."** Make the two-owner split unmistakable.
+- Flow to render: `command → GPT-4o proposal → user confirms interpretation → ARGUS decides → execute/hold`. A compact, expandable **decision trace** ("✓ proposal schema valid · ✓ policy evaluated · → approval required: external forward").
+- Proposal must be **editable / cancellable** before confirm. Show the recipient and body clearly so the user can catch a misread.
+- **Agent states are NOT policy outcomes** — render them distinctly: `AGENT_NEEDS_CLARIFICATION` ("More detail required — no action proposed"), `AGENT_UNAVAILABLE`, `AGENT_OUTPUT_INVALID`. Never show these as a BLOCK/GATED.
+- **Anti-patterns:** no "Done" before a decision exists, no green success on a proposal, no "the AI decided", no "AI confidence: 94%", no "ARGUS knows what you meant". Raw JSON only in a debug/judge view, not the default.
+- Judge-facing line: **"GPT-4o never acts and never decides permission. It converts a request into an inspectable proposal; ARGUS validates, decides, and controls execution."**
+
 ### Needs Phase 5 Part 4 done (safety filter) — framing matters a LOT here
 ARGUS now downgrades certain actions to "always needs your approval" **regardless of how much trust the AI has earned** (delete, external forward, send to a recipient whose domain isn't on the trusted list, anything with Bcc). The UI framing is the whole point:
 - Frame these as **delegation boundaries, not limitations or low confidence.** ARGUS has *defined* autonomy, not unlimited autonomy.
