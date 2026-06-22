@@ -29,9 +29,27 @@ def _db():
     return db
 
 
+# Defense in depth: the audit writer is the LAST line — even if a caller is
+# careless, these keys never get persisted. Audit payloads must be code-owned
+# metadata only (no email content, recipients, drafts, or model text).
+_SENSITIVE_KEYS = {
+    "body", "subject", "recipient", "draft", "content", "raw", "html", "text",
+    "message", "to", "cc", "bcc", "entities", "command", "prompt",
+}
+
+
+def _scrub(value):
+    if isinstance(value, dict):
+        return {k: ("[redacted]" if str(k).lower() in _SENSITIVE_KEYS else _scrub(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return value
+
+
 def _canonical(payload):
-    # Fixed encoding so hashes are reproducible: sorted keys, fixed separators, ASCII.
-    return json.dumps(payload or {}, sort_keys=True, separators=(',', ':'),
+    # Scrub first, then fixed encoding so hashes are reproducible.
+    return json.dumps(_scrub(payload) or {}, sort_keys=True, separators=(',', ':'),
                       ensure_ascii=True, default=str)
 
 
@@ -49,10 +67,23 @@ def record(event_type, correlation_id=None, idempotency_key=None,
     its source mutation. Duplicate idempotency_key → no-op.
     """
     own = db is None
-    conn = db or _db()
+    if own:
+        # Own connection: serialize the read-prev + insert with BEGIN IMMEDIATE so
+        # two concurrent writers can't both chain off the same hash (no fork).
+        conn = sqlite3.connect(DATABASE, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("BEGIN IMMEDIATE")
+        except Exception:
+            pass
+    else:
+        conn = db  # caller's transaction already holds the write lock → serialized
     try:
         if idempotency_key and conn.execute(
                 "SELECT 1 FROM audit_events WHERE idempotency_key=?", (idempotency_key,)).fetchone():
+            if own:
+                conn.execute("COMMIT")
             return {"recorded": False, "reason": "duplicate"}
         if idempotency_key is None:
             idempotency_key = str(uuid.uuid4())
@@ -70,9 +101,14 @@ def record(event_type, correlation_id=None, idempotency_key=None,
             (now, event_type, correlation_id, action_type, outcome, reason,
              idempotency_key, canon, prev_hash, entry_hash))
         if own:
-            conn.commit()
+            conn.execute("COMMIT")
         return {"recorded": True, "entry_hash": entry_hash}
     except Exception as e:
+        if own:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
         return {"recorded": False, "error": str(e)}
     finally:
         if own:

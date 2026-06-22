@@ -24,19 +24,27 @@ SUITES = [
     ('Phase 9 -- GPT-4o Agent Layer',      'tests/test_agent.py'),
     ('Phase 7 -- Audit Trail',             'tests/test_audit.py'),
     ('Integration -- Cross-Phase + Chaos', 'tests/test_integration.py'),
+    ('Independent -- Safety Filter (Codex)',  'tests/test_safety_filter_independent.py'),
+    ('Independent -- Executor (Codex)',       'tests/test_executor_independent.py'),
+    ('Independent -- Agent (Codex)',          'tests/test_agent_independent.py'),
+    ('Independent -- Audit (Codex)',          'tests/test_audit_independent.py'),
 ]
 
 SUITE_SHORTCUTS = {
-    'phase1':      0,
-    'phase2':      1,
-    'phase3':      2,
-    'phase4':      3,
-    'phase5':      4,
-    'templates':   5,
-    'safety':      6,
-    'agent':       7,
-    'audit':       8,
-    'integration': 9,
+    'phase1':       0,
+    'phase2':       1,
+    'phase3':       2,
+    'phase4':       3,
+    'phase5':       4,
+    'templates':    5,
+    'safety':       6,
+    'agent':        7,
+    'audit':        8,
+    'integration':  9,
+    'ind-safety':   10,
+    'ind-executor': 11,
+    'ind-agent':    12,
+    'ind-audit':    13,
 }
 
 GREEN  = '\033[92m'
