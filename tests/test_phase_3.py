@@ -334,6 +334,112 @@ try:
     check('Error response has detail', 'detail' in d)
     check('Error response success = False', d['success'] is False)
 
+    # ── DB helpers for adversarial/boundary tests ──────────────────────────────
+    def _dbset(item_id, **cols):
+        db = sqlite3.connect(DB_PATH)
+        sets = ', '.join(f"{k}=?" for k in cols)
+        db.execute(f"UPDATE approval_queue SET {sets} WHERE id=?", (*cols.values(), item_id))
+        db.commit(); db.close()
+
+    def _dbget(item_id, col):
+        db = sqlite3.connect(DB_PATH); db.row_factory = sqlite3.Row
+        row = db.execute(f"SELECT {col} FROM approval_queue WHERE id=?", (item_id,)).fetchone()
+        db.close()
+        return row[col] if row else None
+
+    # ══ HACKER — adversarial transitions, races, tampering ════════════════════
+    sec('[HACKER] Double-approve — second attempt rejected (no double-action)')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    a1 = approve(it); a2 = approve(it)
+    check('first approve succeeds', a1.get('success') is True)
+    check('second approve -> INVALID_STATE_TRANSITION', a2.get('error_code') == 'INVALID_STATE_TRANSITION')
+
+    sec('[HACKER] Conflicting transition — approve then reject')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    approve(it)
+    check('reject after approve -> INVALID', reject(it, 'changed mind').get('error_code') == 'INVALID_STATE_TRANSITION')
+
+    sec('[HACKER] Cancel after undo window elapsed')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    approve(it)
+    _dbset(it, approved_at=int(time.time()) - 9999)
+    check('cancel after window -> UNDO_WINDOW_CLOSED', cancel(it).get('error_code') == 'UNDO_WINDOW_CLOSED')
+
+    sec('[HACKER] Approve a CANCELLED item')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    cancel(it)
+    check('approve CANCELLED -> INVALID', approve(it).get('error_code') == 'INVALID_STATE_TRANSITION')
+
+    sec('[HACKER] Tampered terminal state (EXECUTED) cannot transition')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    _dbset(it, status='EXECUTED')
+    check('approve EXECUTED -> INVALID', approve(it).get('error_code') == 'INVALID_STATE_TRANSITION')
+    check('reject EXECUTED -> INVALID', reject(it, 'x').get('error_code') == 'INVALID_STATE_TRANSITION')
+    check('cancel EXECUTED -> INVALID', cancel(it).get('error_code') == 'INVALID_STATE_TRANSITION')
+
+    sec('[HACKER] Injection-laden reject reason stored verbatim, no crash')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    payload = "'; DROP TABLE approval_queue;-- \n<script>"
+    r = reject(it, payload)
+    check('reject with injection succeeds', r.get('success') is True)
+    check('reason stored verbatim (parameterized, not executed)', _dbget(it, 'status_reason') == payload)
+    check('table still intact after injection', isinstance(fetch_pending(), list))
+
+    sec('[HACKER] SQL injection in approve item_id -> not found, no crash')
+    check('injection id -> ITEM_NOT_FOUND', approve("' OR '1'='1").get('error_code') == 'ITEM_NOT_FOUND')
+
+    sec('[HACKER] expire_stale leaves APPROVED / MANUAL_REVIEW untouched')
+    appr = enqueue(gated_proposal(), MOCK_DECISION)['id']; approve(appr)
+    _dbset(appr, expires_at=int(time.time()) - 10)
+    mr = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    _dbset(mr, status='MANUAL_REVIEW', expires_at=int(time.time()) - 10)
+    expire_stale()
+    check('past-expiry APPROVED not expired', _dbget(appr, 'status') == 'APPROVED')
+    check('past-expiry MANUAL_REVIEW not expired', _dbget(mr, 'status') == 'MANUAL_REVIEW')
+
+    # ══ STRICT TEACHER — exact boundaries + full transition matrix ════════════
+    sec('[STRICT] Undo-window boundary on cancel')
+    win = 30  # default UNDO_WINDOW_SECONDS
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']; approve(it)
+    _dbset(it, approved_at=int(time.time()) - (win - 2))   # just inside window
+    check('cancel just inside window allowed', cancel(it).get('success') is True)
+    it2 = enqueue(gated_proposal(), MOCK_DECISION)['id']; approve(it2)
+    _dbset(it2, approved_at=int(time.time()) - (win + 2))  # just past window
+    check('cancel just past window blocked', cancel(it2).get('error_code') == 'UNDO_WINDOW_CLOSED')
+
+    sec('[STRICT] expire_stale boundary (only past-expiry PENDING)')
+    e1 = enqueue(gated_proposal(), MOCK_DECISION)['id']; _dbset(e1, expires_at=int(time.time()) - 5)
+    e2 = enqueue(gated_proposal(), MOCK_DECISION)['id']; _dbset(e2, expires_at=int(time.time()) + 100)
+    expire_stale()
+    check('past-expiry PENDING -> EXPIRED', _dbget(e1, 'status') == 'EXPIRED')
+    check('future-expiry PENDING -> still PENDING', _dbget(e2, 'status') == 'PENDING')
+
+    sec('[STRICT] MANUAL_REVIEW transitions — approve/reject/cancel all allowed')
+    for call, label in [(lambda i: approve(i), 'approve'),
+                        (lambda i: reject(i, 'x'), 'reject'),
+                        (lambda i: cancel(i), 'cancel')]:
+        it = enqueue(gated_proposal(), MOCK_DECISION)['id']; _dbset(it, status='MANUAL_REVIEW')
+        check(f'MANUAL_REVIEW -> {label} succeeds', call(it).get('success') is True)
+
+    sec('[STRICT] approve/reject return proposal_json (for Phase-4 connectors)')
+    it = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    ra = approve(it)
+    check('approve returns proposal_json', bool(ra.get('proposal_json')))
+    it2 = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    rr = reject(it2, 'no thanks')
+    check('reject returns proposal_json', bool(rr.get('proposal_json')))
+
+    sec('[STRICT] fetch_pending — only PENDING + MANUAL_REVIEW, oldest first')
+    db = sqlite3.connect(DB_PATH); db.execute("DELETE FROM approval_queue"); db.commit(); db.close()
+    p1 = enqueue(gated_proposal(), MOCK_DECISION)['id']; time.sleep(1)
+    p2 = enqueue(gated_proposal(), MOCK_DECISION)['id']
+    mrx = enqueue(gated_proposal(), MOCK_DECISION)['id']; _dbset(mrx, status='MANUAL_REVIEW')
+    apx = enqueue(gated_proposal(), MOCK_DECISION)['id']; approve(apx)
+    ids = [x['id'] for x in fetch_pending()]
+    check('APPROVED excluded from pending', apx not in ids)
+    check('PENDING + MANUAL_REVIEW included', p1 in ids and p2 in ids and mrx in ids)
+    check('ordered oldest-first', ids.index(p1) < ids.index(p2))
+
 finally:
     server.terminate()
     print()
