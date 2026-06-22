@@ -160,16 +160,43 @@ def _versions():
     return {"agent_prompt_version": AGENT_PROMPT_VERSION, "taxonomy_version": TAXONOMY_VERSION}
 
 
-def run_agent(command):
+def verify_selected_email(email_id):
+    """
+    Verify a selected Gmail message exists and return its metadata.
+    Used for grounding: frontend passes selected_email_id, code confirms it.
+    Returns {id, subject, sender, receivedAt} or raises RuntimeError.
+    """
+    try:
+        from argus.gmail_client import get_message_metadata
+        return get_message_metadata(email_id)
+    except Exception as e:
+        raise RuntimeError(f"Selected email could not be verified: {str(e)[:100]}")
+
+
+def run_agent(command, selected_email_id=None):
     """
     NL command -> canonical proposal (NOT executed). Returns an agent_status and,
     only on PROPOSAL, an agent_proposal_id + the proposal. Failure/clarification
     states carry NO executable fields.
+
+    If selected_email_id is provided, verifies it exists in Gmail and includes
+    grounding confirmation in response.
     """
     if not command or not isinstance(command, str) or not command.strip():
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "empty command", **_versions()}
     if len(command) > AGENT_MAX_COMMAND_LEN:
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "command too long", **_versions()}
+
+    # Verify selected email if provided (grounding check before interpretation)
+    grounding_confirmed = False
+    selected_email_metadata = None
+    if selected_email_id:
+        try:
+            selected_email_metadata = verify_selected_email(selected_email_id)
+            grounding_confirmed = True
+        except Exception as e:
+            return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": str(e)[:200],
+                    "grounding_confirmed": False, **_versions()}
 
     # Pass 1 — extraction
     try:
@@ -226,5 +253,8 @@ def run_agent(command):
                              "agent_prompt_version": AGENT_PROMPT_VERSION})
     except Exception:
         pass
-    return {"agent_status": "PROPOSAL", "agent_proposal_id": pid,
-            "proposal": proposal, **_versions()}
+    result = {"agent_status": "PROPOSAL", "agent_proposal_id": pid,
+              "proposal": proposal, "grounding_confirmed": grounding_confirmed, **_versions()}
+    if selected_email_metadata:
+        result["selected_email"] = selected_email_metadata
+    return result

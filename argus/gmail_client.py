@@ -263,3 +263,72 @@ def modify_labels(message_id, add=None, remove=None):
         body['removeLabelIds'] = remove
     service.users().messages().modify(userId='me', id=message_id, body=body).execute()
     return {"message_id": message_id, "modified": True}
+
+
+# ── Frontend grounding: read-only inbox access ────────────────────────────────
+
+def list_messages(max_results=20):
+    """
+    Fetch recent messages (read-only, minimal metadata for inbox UI).
+    Returns [{id, subject, sender, receivedAt, snippet}].
+    """
+    try:
+        service = get_service()
+        results = service.users().messages().list(
+            userId='me',
+            maxResults=min(max(1, max_results), 50),
+            q=''
+        ).execute()
+        message_ids = [m['id'] for m in results.get('messages', [])]
+
+        messages = []
+        for msg_id in message_ids:
+            try:
+                msg = service.users().messages().get(
+                    userId='me',
+                    id=msg_id,
+                    format='metadata',
+                    metadataHeaders=['Subject', 'From', 'Date']
+                ).execute()
+                headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
+                messages.append({
+                    'id': msg_id,
+                    'subject': headers.get('Subject', '(No subject)'),
+                    'sender': headers.get('From', '(Unknown)'),
+                    'receivedAt': headers.get('Date', ''),
+                    'snippet': msg.get('snippet', ''),
+                })
+            except Exception:
+                continue
+        return messages
+    except Exception as e:
+        raise RuntimeError(f"Failed to list messages: {str(e)[:100]}")
+
+
+def get_message_metadata(message_id):
+    """
+    Fetch minimal metadata for a single message (for grounding verification).
+    Returns {id, subject, sender, receivedAt}.
+    Raises RuntimeError if message not found or inaccessible.
+    """
+    try:
+        service = get_service()
+        msg = service.users().messages().get(
+            userId='me',
+            id=message_id,
+            format='metadata',
+            metadataHeaders=['Subject', 'From', 'Date']
+        ).execute()
+        headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
+        return {
+            'id': message_id,
+            'subject': headers.get('Subject', '(No subject)'),
+            'sender': headers.get('From', '(Unknown)'),
+            'receivedAt': headers.get('Date', ''),
+        }
+    except HttpError as e:
+        if e.resp.status == 404:
+            raise RuntimeError(f"Message {message_id} not found")
+        raise RuntimeError(f"Cannot access message {message_id}: {str(e)[:100]}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch message metadata: {str(e)[:100]}")

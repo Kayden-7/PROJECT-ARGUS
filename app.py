@@ -126,11 +126,13 @@ def create_app():
     @app.route('/api/agent/run', methods=['POST'])
     def agent_run():
         # Interprets only — never executes. Returns a canonical proposal to confirm.
+        # Optional: selected_email_id for frontend grounding (verifies email exists).
         from argus.agent import run_agent
         body = request.get_json(silent=True) or {}
         command = body.get("command", "")
+        selected_email_id = body.get("selected_email_id")
         try:
-            result = run_agent(command)
+            result = run_agent(command, selected_email_id=selected_email_id)
         except Exception as e:
             return jsonify({"agent_status": "AGENT_UNAVAILABLE", "detail": str(e)}), 500
         return jsonify(result), 200
@@ -413,6 +415,26 @@ def create_app():
             return jsonify({"success": False, "error_code": "SEND_FAILED",
                             "detail": str(e)}), 502
         return jsonify({"success": True, **result}), 200
+
+    @app.route('/api/gmail/messages')
+    def gmail_messages():
+        # Read-only inbox list for frontend email selection.
+        # Returns [{id, subject, sender, receivedAt, snippet}].
+        from argus.gmail_client import is_connected, list_messages
+        if not is_connected():
+            return jsonify({"success": False, "error_code": "GMAIL_NOT_CONNECTED",
+                            "detail": "Connect Gmail first at /api/gmail/connect"}), 409
+        limit = request.args.get('limit', '20')
+        try:
+            limit = max(1, min(int(limit), 50))
+        except ValueError:
+            limit = 20
+        try:
+            messages = list_messages(max_results=limit)
+            return jsonify({"success": True, "messages": messages}), 200
+        except Exception as e:
+            return jsonify({"success": False, "error_code": "FETCH_FAILED",
+                            "detail": str(e)[:200]}), 503
 
     # ── Phase 4 Part 3: Trust read endpoint ───────────────────────────────────
 

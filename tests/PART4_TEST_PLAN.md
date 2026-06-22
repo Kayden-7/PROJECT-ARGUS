@@ -46,3 +46,5 @@ Target: a decent batch in each of the three angles, mirroring test_phase_5 / tes
 8. TRANSIENT that keeps failing → escalates to MANUAL_REVIEW after a defined bound (no infinite retry).
 9. The filtered-action set is exactly the agreed list (no more, no fewer) — assert membership precisely.
 10. Decision trace records that the safety filter fired (auditability), separate from the trust layer.
+
+up:: [[ARGUS]]
