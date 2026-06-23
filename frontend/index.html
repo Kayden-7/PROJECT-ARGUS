@@ -25,7 +25,7 @@
 </div>
 
 <div id="workbench-page" class="page">
-  <nav class="app-nav">
+  <nav class="app-nav" aria-label="Primary">
     <div class="app-nav-left">
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
@@ -75,6 +75,7 @@
         <div class="proposal-row"><span class="proposal-row-label">Action</span><span class="proposal-row-value" id="proposal-action"></span></div>
         <div class="proposal-row" id="proposal-to-row"><span class="proposal-row-label">To</span><span class="proposal-row-value" id="proposal-to"></span></div>
         <div class="proposal-row" id="proposal-subject-row"><span class="proposal-row-label">Subject</span><span class="proposal-row-value" id="proposal-subject"></span></div>
+        <p class="proposal-disclaimer">ARGUS does not send. This is a proposal only.</p>
       </div>
 
       <div id="decision-card" class="card decision-card" hidden>
@@ -100,14 +101,22 @@
             <line id="gauge-ceiling" x1="110" y1="120" x2="110" y2="40" class="gauge-ceiling-marker"/>
           </svg>
           <div class="gauge-readout">
-            <div class="gauge-value" id="gauge-value">40</div>
+            <div class="gauge-mode" id="gauge-mode" hidden>TOTAL TRUST</div>
             <div class="gauge-label" id="gauge-label">Developing</div>
           </div>
         </div>
-        <div class="gauge-meta">
+        <div class="gauge-meta" id="gauge-meta">
           <div class="meta-row"><span>Trust ceiling</span><span id="meta-ceiling"></span></div>
           <div class="meta-row"><span>Overall modifier</span><span id="meta-modifier"></span></div>
           <div class="meta-row recovery-row" id="meta-recovery" hidden><span>Stabilizing — </span><span id="recovery-detail"></span></div>
+        </div>
+        <div class="trust-strip-section">
+          <div class="trust-strip-header">All action types</div>
+          <button type="button" id="total-trust-chip" class="total-chip">
+            <span class="total-chip-label">Total trust</span>
+            <span class="total-chip-band" id="total-chip-band"></span>
+          </button>
+          <div id="trust-strip" class="trust-strip"></div>
         </div>
       </div>
     </section>
@@ -120,7 +129,7 @@
 </div>
 
 <div id="audit-page" class="page">
-  <nav class="app-nav">
+  <nav class="app-nav" aria-label="Primary">
     <div class="app-nav-left">
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
@@ -144,12 +153,14 @@
       <button id="audit-verify-btn" class="btn-secondary" style="width:auto;">Verify chain integrity</button>
     </div>
     <p id="audit-verify-result" class="proposal-hint"></p>
-    <table class="audit-table">
-      <thead>
-        <tr><th>Timestamp</th><th>Action</th><th>Outcome</th><th>Actor</th></tr>
-      </thead>
-      <tbody id="audit-tbody"></tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="audit-table">
+        <thead>
+          <tr><th scope="col">Timestamp</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th></tr>
+        </thead>
+        <tbody id="audit-tbody"></tbody>
+      </table>
+    </div>
     <div id="audit-replay-panel" class="card" hidden style="margin-top: var(--spacing-lg);">
       <div class="card-header">Replay</div>
       <p id="audit-replay-label" class="proposal-hint"></p>
@@ -159,7 +170,7 @@
 </div>
 
 <div id="trust-page" class="page">
-  <nav class="app-nav">
+  <nav class="app-nav" aria-label="Primary">
     <div class="app-nav-left">
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
@@ -187,7 +198,7 @@
 </div>
 
 <div id="templates-page" class="page">
-  <nav class="app-nav">
+  <nav class="app-nav" aria-label="Primary">
     <div class="app-nav-left">
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
@@ -304,7 +315,7 @@
 </div>
 
 <div id="executions-page" class="page">
-  <nav class="app-nav">
+  <nav class="app-nav" aria-label="Primary">
     <div class="app-nav-left">
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
@@ -329,7 +340,7 @@
 </div>
 
 <div id="settings-page" class="page">
-  <nav class="app-nav">
+  <nav class="app-nav" aria-label="Primary">
     <div class="app-nav-left">
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
@@ -355,7 +366,7 @@
         <button class="profile-opt" data-profile="Balanced">Balanced</button>
         <button class="profile-opt" data-profile="Autonomous">Autonomous</button>
       </div>
-      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Visual preference only — <code>POST /api/profile</code> does not exist on the backend yet, so this does not change which trust ceiling actually applies server-side.</p>
+      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Sets the default trust ceiling applied to new decisions.</p>
     </div>
 
     <div class="card">
@@ -364,7 +375,7 @@
         <button id="estop-btn" class="btn-secondary estop-btn">Engage emergency stop</button>
         <span class="status-line" id="estop-status"><span class="dot dot-green"></span> System armed</span>
       </div>
-      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Visual/local control — disables Generate Proposal and Approve/Reject in this browser session. <code>POST /api/emergency/stop</code> does not exist on the backend yet.</p>
+      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Immediately halts new proposals and pending approvals across this session.</p>
     </div>
 
     <div class="card">
@@ -387,13 +398,8 @@
     </div>
 
     <div class="card">
-      <div class="card-header">Google Calendar</div>
-      <p class="status-line"><span class="dot dot-amber"></span> Not built yet — Phase 6 not started.</p>
-    </div>
-
-    <div class="card">
       <div class="card-header">Private Contacts</div>
-      <p class="proposal-hint">ARGUS will not read or act on emails involving these people. Stored locally — backend enforcement at proposal time requires Phase 8.</p>
+      <p class="proposal-hint">ARGUS will not read or act on emails involving these people.</p>
       <div class="contact-add-row">
         <input type="text" id="contact-add-input" placeholder="Name or email address">
         <button id="contact-add-btn" class="btn-secondary" style="width:auto;">Add</button>

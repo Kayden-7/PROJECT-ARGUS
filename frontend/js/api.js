@@ -211,6 +211,35 @@ export async function resetDemo() {
   return request('/demo/reset', { method: 'POST' });
 }
 
+// ── Phase 8 endpoints (NOT YET LIVE) ────────────────────────────────────────
+// Emergency Stop and Private Contacts run local-only today (localStorage in
+// app.js). When the backend lands the real routes, set the two constants below
+// to the final paths — that is the ONLY change needed to go server-authoritative;
+// the wrappers already normalize errors into the same {ok,status,body} shape as
+// every other call here. Do NOT guess the paths — leave null until confirmed.
+export const ESTOP_ENDPOINT = null;            // TODO(phase8): e.g. '/api/emergency/stop'
+export const PRIVATE_CONTACTS_ENDPOINT = null; // TODO(phase8): e.g. '/api/contacts'
+
+// POST <ESTOP_ENDPOINT> { engaged: bool }. No-op (NOT_WIRED) until the constant is set.
+export async function setEmergencyStop(engaged) {
+  if (!ESTOP_ENDPOINT) return { ok: false, status: 0, body: { error_code: 'NOT_WIRED' } };
+  return request(ESTOP_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ engaged }),
+  });
+}
+
+// POST <PRIVATE_CONTACTS_ENDPOINT> { contacts: string[] }. No-op until the constant is set.
+export async function savePrivateContacts(contacts) {
+  if (!PRIVATE_CONTACTS_ENDPOINT) return { ok: false, status: 0, body: { error_code: 'NOT_WIRED' } };
+  return request(PRIVATE_CONTACTS_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contacts }),
+  });
+}
+
 // POST /api/gmail/test — { to, subject?, body? } -> { success, ...sendResult }
 // or { success:false, error_code:"GMAIL_NOT_CONNECTED"|"MISSING_RECIPIENT"|"SEND_FAILED", detail }
 export async function gmailTest(to, subject, body) {
