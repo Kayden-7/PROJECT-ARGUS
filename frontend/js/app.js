@@ -460,6 +460,11 @@ async function handleGenerateProposal() {
     btn.disabled = false;
     return;
   }
+  if (agentBody.agent_status === 'AGENT_UNAVAILABLE') {
+    setProposalStatus('Agent is unavailable — the server is missing its OPENAI_API_KEY configuration. This is a server setup issue, not a problem with your command.');
+    btn.disabled = false;
+    return;
+  }
   if (agentBody.agent_status !== 'PROPOSAL') {
     setProposalStatus('Could not interpret that command. Try rephrasing.');
     btn.disabled = false;

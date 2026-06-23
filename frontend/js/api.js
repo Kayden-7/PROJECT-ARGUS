@@ -27,16 +27,16 @@ const REQUEST_TIMEOUT_MS = 10000;
 // try/catch, so network errors and timeouts are normalized into the same
 // {ok:false, status, body:{error_code, detail}} shape as a real 4xx/5xx
 // response, instead of becoming an unhandled rejection.
-async function request(path, options) {
+async function request(path, options, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, { ...options, signal: controller.signal });
   } catch (e) {
     clearTimeout(timeoutId);
     if (e.name === 'AbortError') {
-      return { ok: false, status: 0, body: { error_code: 'TIMEOUT', detail: `Request to ${path} timed out after ${REQUEST_TIMEOUT_MS / 1000}s.` } };
+      return { ok: false, status: 0, body: { error_code: 'TIMEOUT', detail: `Request to ${path} timed out after ${timeoutMs / 1000}s.` } };
     }
     return { ok: false, status: 0, body: { error_code: 'NETWORK_ERROR', detail: e.message } };
   }
@@ -53,8 +53,11 @@ async function request(path, options) {
 // GET /api/gmail/messages?limit=20
 // Response: { success, messages: [{id, subject, sender, receivedAt, snippet}] }
 // or { success:false, error_code:"GMAIL_NOT_CONNECTED", detail }
+// Longer timeout than the default: argus/gmail_client.py:list_messages() fetches
+// each message's metadata with a separate Gmail API call (N+1), so 20 messages
+// can legitimately take 10-12s — measured against the live server, not a guess.
 export async function fetchInbox(limit = 20) {
-  return request(`/api/gmail/messages?limit=${limit}`);
+  return request(`/api/gmail/messages?limit=${limit}`, undefined, 25000);
 }
 
 // POST /api/agent/run
