@@ -263,11 +263,19 @@ function renderDecision(decision, decisionDict, queue, trust) {
   document.getElementById('decision-reason').textContent = dd.narrative || '';
 
   const deltaEl = document.getElementById('decision-delta');
+  const breakdown = dd.modifier_breakdown || {};
   if (trust && trust.trust_before != null && trust.trust_after != null) {
     const sign = trust.actual_delta >= 0 ? '+' : '';
     deltaEl.textContent = `${trust.trust_before.toFixed(1)} → ${trust.trust_after.toFixed(1)} (${sign}${trust.actual_delta.toFixed(1)})`;
-  } else if (decision === 'GATED' && dd.trust_delta_preview != null) {
-    deltaEl.textContent = `${dd.trust_delta_preview} (preview, pending approval)`;
+  } else if (decision === 'GATED' && dd.trust_impact !== 'none'
+             && breakdown.success_delta != null && breakdown.failure_delta != null) {
+    // decision_dict.trust_delta_preview is always null on the backend (a dead field) —
+    // modifier_breakdown's raw severity-tier deltas are the real preview data available
+    // pre-inertia/damping, so use those instead of silently claiming "no trust impact."
+    const succ = breakdown.success_delta >= 0 ? `+${breakdown.success_delta}` : breakdown.success_delta;
+    deltaEl.textContent = `Pending — est. ${succ} if approved & it succeeds, ${breakdown.failure_delta} if it fails (before inertia/damping)`;
+  } else if (decision === 'GATED') {
+    deltaEl.textContent = 'Trust impact pending — held for review, no impact recorded yet.';
   } else {
     deltaEl.textContent = 'No trust impact';
   }
@@ -789,7 +797,17 @@ function renderTemplates(list) {
     const removeBtn = document.createElement('button');
     removeBtn.className = 'template-remove-btn';
     removeBtn.textContent = 'Remove';
-    removeBtn.addEventListener('click', async () => { await deleteTemplate(tpl.id); refreshTemplates(); });
+    removeBtn.addEventListener('click', async () => {
+      removeBtn.disabled = true;
+      const result = await deleteTemplate(tpl.id);
+      if (!result.ok) {
+        removeBtn.disabled = false;
+        document.getElementById('tpl-form-error').hidden = false;
+        document.getElementById('tpl-form-error').textContent = (result.body && result.body.detail) || 'Could not remove boundary.';
+        return;
+      }
+      refreshTemplates();
+    });
     head.appendChild(contact);
     head.appendChild(scope);
     head.appendChild(badge);
