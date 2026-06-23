@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARGUS</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="login-page" class="page">
+  <div class="login-screen">
+    <div class="login-container card">
+      <div class="login-mark"><span class="brand-mark"></span><h1>ARGUS</h1></div>
+      <p class="tagline">Permission &amp; Trust Layer for AI Agents</p>
+      <form id="login-form">
+        <input type="text" id="username" placeholder="Username" autocomplete="off" required>
+        <input type="password" id="password" placeholder="Password" autocomplete="off" required>
+        <p id="login-error" class="login-error"></p>
+        <button type="submit" class="btn-primary">Sign In</button>
+      </form>
+      <p class="hint">Demo: PROJECT_ARGUS / ARGUS_DEMO</p>
+    </div>
+  </div>
+</div>
+
+<div id="workbench-page" class="page">
+  <nav class="app-nav">
+    <div class="app-nav-left">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ARGUS</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-page">Decision Workbench</span>
+    </div>
+    <div class="app-nav-right">
+      <a class="nav-link" data-page="audit">Audit Trail</a>
+      <a class="nav-link" data-page="trust">Trust History</a>
+      <a class="nav-link" data-page="templates">Templates</a>
+      <a class="nav-link" data-page="executions">Executions</a>
+      <a class="nav-link" data-page="settings">Settings</a>
+      <span class="avatar" id="user-avatar">PA</span>
+    </div>
+  </nav>
+
+  <div id="estop-banner" class="banner banner-error" hidden>
+    <p class="banner-message">EMERGENCY STOP ENGAGED — all approvals and new proposals are disabled. Disengage from Settings.</p>
+  </div>
+
+  <div id="workbench-banner-slot"></div>
+
+  <div class="workbench-grid">
+    <section class="inbox-panel">
+      <div class="inbox-header">
+        <span class="inbox-title">Inbox &middot; Read-only</span>
+        <span class="inbox-count" id="inbox-count">0</span>
+      </div>
+      <div id="inbox-loader" class="skeleton-text" style="width:100%;height:64px;" hidden></div>
+      <div id="inbox-items"></div>
+    </section>
+
+    <section class="command-panel">
+      <p class="command-label">Your command</p>
+      <div class="card" style="margin-bottom: var(--spacing-md);">
+        <textarea id="command-input" placeholder="e.g., 'Reply saying I'll be there.'" maxlength="500" rows="2"></textarea>
+        <p class="command-context" id="command-email-context"></p>
+        <button id="generate-proposal-btn" class="btn-primary" style="margin-top: var(--spacing-md);">Generate proposal</button>
+        <div id="proposal-status"></div>
+      </div>
+
+      <div id="proposal-block" class="proposal-block" hidden>
+        <div class="proposal-header-row">
+          <span class="section-marker">AI Proposal</span>
+          <span class="proposal-hint">interpreted from your command</span>
+        </div>
+        <div class="proposal-row"><span class="proposal-row-label">Action</span><span class="proposal-row-value" id="proposal-action"></span></div>
+        <div class="proposal-row" id="proposal-to-row"><span class="proposal-row-label">To</span><span class="proposal-row-value" id="proposal-to"></span></div>
+        <div class="proposal-row" id="proposal-subject-row"><span class="proposal-row-label">Subject</span><span class="proposal-row-value" id="proposal-subject"></span></div>
+      </div>
+
+      <div id="decision-card" class="card decision-card" hidden>
+        <div class="card-header">Policy Decision</div>
+        <div id="decision-outcome" class="decision-badge"></div>
+        <p id="decision-reason" class="decision-reason"></p>
+        <p id="decision-delta" class="decision-delta"></p>
+        <p id="containment-msg" class="containment-msg" hidden>Action blocked before execution. No external effects occurred.</p>
+        <details class="trace-details">
+          <summary>Why this was allowed / blocked / gated</summary>
+          <pre id="decision-trace" class="trace-pre"></pre>
+        </details>
+      </div>
+
+      <div id="authorisation-slot"></div>
+
+      <div id="trust-widget" class="card trust-widget" hidden>
+        <div class="card-header">Trust Memory — <span id="trust-widget-action"></span></div>
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 220 140" class="gauge-svg" id="gauge-svg">
+            <path d="M 20 120 A 90 90 0 0 1 200 120" class="gauge-track"/>
+            <path d="M 20 120 A 90 90 0 0 1 200 120" class="gauge-fill" id="gauge-fill"/>
+            <line id="gauge-ceiling" x1="110" y1="120" x2="110" y2="40" class="gauge-ceiling-marker"/>
+          </svg>
+          <div class="gauge-readout">
+            <div class="gauge-value" id="gauge-value">40</div>
+            <div class="gauge-label" id="gauge-label">Developing</div>
+          </div>
+        </div>
+        <div class="gauge-meta">
+          <div class="meta-row"><span>Trust ceiling</span><span id="meta-ceiling"></span></div>
+          <div class="meta-row"><span>Overall modifier</span><span id="meta-modifier"></span></div>
+          <div class="meta-row recovery-row" id="meta-recovery" hidden><span>Stabilizing — </span><span id="recovery-detail"></span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section id="queue-panel" class="card">
+    <h3>Queue</h3>
+    <div id="queue-items"></div>
+  </section>
+</div>
+
+<div id="audit-page" class="page">
+  <nav class="app-nav">
+    <div class="app-nav-left">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ARGUS</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-page">Audit Trail</span>
+    </div>
+    <div class="app-nav-right">
+      <a class="nav-link" data-page="workbench">Workbench</a>
+      <a class="nav-link" data-page="trust">Trust History</a>
+      <a class="nav-link" data-page="templates">Templates</a>
+      <a class="nav-link" data-page="executions">Executions</a>
+      <a class="nav-link" data-page="settings">Settings</a>
+      <span class="avatar">PA</span>
+    </div>
+  </nav>
+  <div class="audit-content">
+    <h2>Audit Trail</h2>
+    <p class="tagline">Every evaluation is recorded. Rows are clickable to inspect the full event. Nothing here animates.</p>
+    <div class="audit-toolbar">
+      <p id="audit-summary" class="command-context"></p>
+      <button id="audit-verify-btn" class="btn-secondary" style="width:auto;">Verify chain integrity</button>
+    </div>
+    <p id="audit-verify-result" class="proposal-hint"></p>
+    <table class="audit-table">
+      <thead>
+        <tr><th>Timestamp</th><th>Action</th><th>Outcome</th><th>Actor</th></tr>
+      </thead>
+      <tbody id="audit-tbody"></tbody>
+    </table>
+    <div id="audit-replay-panel" class="card" hidden style="margin-top: var(--spacing-lg);">
+      <div class="card-header">Replay</div>
+      <p id="audit-replay-label" class="proposal-hint"></p>
+      <pre id="audit-replay-events" class="trace-pre"></pre>
+    </div>
+  </div>
+</div>
+
+<div id="trust-page" class="page">
+  <nav class="app-nav">
+    <div class="app-nav-left">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ARGUS</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-page">Trust History</span>
+    </div>
+    <div class="app-nav-right">
+      <a class="nav-link" data-page="workbench">Workbench</a>
+      <a class="nav-link" data-page="audit">Audit Trail</a>
+      <a class="nav-link" data-page="templates">Templates</a>
+      <a class="nav-link" data-page="executions">Executions</a>
+      <a class="nav-link" data-page="settings">Settings</a>
+      <span class="avatar">PA</span>
+    </div>
+  </nav>
+  <div class="audit-content">
+    <h2>Trust History</h2>
+    <p class="command-label" style="margin: var(--spacing-lg) 0 var(--spacing-sm);">Action type</p>
+    <select id="trust-action-type"></select>
+    <div id="trust-graph-container" style="margin-top: var(--spacing-lg);">
+      <svg id="trust-graph" width="100%" height="280" viewBox="0 0 800 280"></svg>
+      <p id="trust-tooltip" class="command-context"></p>
+    </div>
+  </div>
+</div>
+
+<div id="templates-page" class="page">
+  <nav class="app-nav">
+    <div class="app-nav-left">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ARGUS</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-page">Communication Boundaries</span>
+    </div>
+    <div class="app-nav-right">
+      <a class="nav-link" data-page="workbench">Workbench</a>
+      <a class="nav-link" data-page="audit">Audit Trail</a>
+      <a class="nav-link" data-page="trust">Trust History</a>
+      <a class="nav-link" data-page="executions">Executions</a>
+      <a class="nav-link" data-page="settings">Settings</a>
+      <span class="avatar">PA</span>
+    </div>
+  </nav>
+  <div class="audit-content">
+    <h2>Communication Boundaries</h2>
+    <p class="tagline">Structural writing-style limits per contact and/or action. Validator-enforced, not an "AI humanizer."</p>
+
+    <div class="card template-form-card">
+      <div class="card-header">New Boundary</div>
+      <p class="proposal-hint">Leave contact and/or action blank to scope this boundary more broadly (contact-wide, action-wide, or global default).</p>
+      <p class="command-label" style="margin-top: var(--spacing-md);">Contact (optional)</p>
+      <input type="text" id="tpl-contact" placeholder="e.g. boss@company.com">
+      <p class="command-label" style="margin-top: var(--spacing-md);">Action type (optional)</p>
+      <select id="tpl-action-type"><option value="">Any action</option></select>
+
+      <div class="tpl-field-grid">
+        <div>
+          <p class="command-label">Tone</p>
+          <select id="tpl-tone">
+            <option value="neutral">Neutral</option>
+            <option value="warm">Warm</option>
+            <option value="direct">Direct</option>
+            <option value="formal">Formal</option>
+            <option value="friendly">Friendly</option>
+          </select>
+        </div>
+        <div>
+          <p class="command-label">Formality</p>
+          <select id="tpl-formality">
+            <option value="professional">Professional</option>
+            <option value="casual">Casual</option>
+            <option value="formal">Formal</option>
+          </select>
+        </div>
+        <div>
+          <p class="command-label">Length preset</p>
+          <select id="tpl-length">
+            <option value="brief">Brief</option>
+            <option value="standard">Standard</option>
+            <option value="detailed">Detailed</option>
+          </select>
+        </div>
+        <div>
+          <p class="command-label">Greeting</p>
+          <select id="tpl-greeting">
+            <option value="first_name">First name</option>
+            <option value="formal_name">Formal name</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+        <div>
+          <p class="command-label">Sign-off</p>
+          <select id="tpl-signoff">
+            <option value="thanks">Thanks,</option>
+            <option value="regards">Regards,</option>
+            <option value="best">Best,</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tpl-field-grid">
+        <div>
+          <p class="command-label">Max words (10-1000)</p>
+          <input type="number" id="tpl-max-words" min="10" max="1000" value="120">
+        </div>
+        <div>
+          <p class="command-label">Max sentences (1-30)</p>
+          <input type="number" id="tpl-max-sentences" min="1" max="30" value="8">
+        </div>
+        <div>
+          <p class="command-label">Max paragraphs (1-8)</p>
+          <input type="number" id="tpl-max-paragraphs" min="1" max="8" value="3">
+        </div>
+      </div>
+
+      <p class="command-label" style="margin-top: var(--spacing-md);">Phrases to avoid (comma-separated, validator-only — never sent to the model)</p>
+      <input type="text" id="tpl-avoid" placeholder="e.g. ASAP, !!!, per my last email">
+      <button id="tpl-add-btn" class="btn-primary" style="margin-top: var(--spacing-md);">Save boundary</button>
+      <p class="banner-message" id="tpl-form-error" hidden style="color: var(--color-oxblood); margin-top: var(--spacing-sm);"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Test Match</div>
+      <p class="proposal-hint">See which boundary would apply, before drafting anything.</p>
+      <div class="tpl-field-grid">
+        <div>
+          <p class="command-label">Contact</p>
+          <input type="text" id="tpl-match-contact" placeholder="e.g. boss@company.com">
+        </div>
+        <div>
+          <p class="command-label">Action type</p>
+          <select id="tpl-match-action"><option value="">Any action</option></select>
+        </div>
+      </div>
+      <button id="tpl-match-btn" class="btn-secondary" style="margin-top: var(--spacing-md);">Check match</button>
+      <p class="tpl-match-result" id="tpl-match-result"></p>
+    </div>
+
+    <div id="template-list"></div>
+  </div>
+</div>
+
+<div id="executions-page" class="page">
+  <nav class="app-nav">
+    <div class="app-nav-left">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ARGUS</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-page">Execution Status</span>
+    </div>
+    <div class="app-nav-right">
+      <a class="nav-link" data-page="workbench">Workbench</a>
+      <a class="nav-link" data-page="audit">Audit Trail</a>
+      <a class="nav-link" data-page="trust">Trust History</a>
+      <a class="nav-link" data-page="templates">Templates</a>
+      <a class="nav-link" data-page="settings">Settings</a>
+      <span class="avatar">PA</span>
+    </div>
+  </nav>
+  <div class="audit-content">
+    <h2>Execution Status</h2>
+    <p class="tagline">Live pipeline for approved actions ARGUS is sending. On any uncertainty, it stops and asks — never a silent double-send or lost email.</p>
+    <button id="executions-tick-btn" class="btn-secondary" style="width:auto; margin: var(--spacing-md) 0;">Process now</button>
+    <div id="execution-list"></div>
+  </div>
+</div>
+
+<div id="settings-page" class="page">
+  <nav class="app-nav">
+    <div class="app-nav-left">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ARGUS</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-page">Settings</span>
+    </div>
+    <div class="app-nav-right">
+      <a class="nav-link" data-page="workbench">Workbench</a>
+      <a class="nav-link" data-page="audit">Audit Trail</a>
+      <a class="nav-link" data-page="trust">Trust History</a>
+      <a class="nav-link" data-page="templates">Templates</a>
+      <a class="nav-link" data-page="executions">Executions</a>
+      <span class="avatar">PA</span>
+    </div>
+  </nav>
+  <div class="audit-content">
+    <h2>Settings</h2>
+
+    <div class="card" style="margin-top: var(--spacing-lg);">
+      <div class="card-header">Policy Profile</div>
+      <div class="profile-switcher" id="profile-switcher">
+        <button class="profile-opt" data-profile="Strict">Strict</button>
+        <button class="profile-opt" data-profile="Balanced">Balanced</button>
+        <button class="profile-opt" data-profile="Autonomous">Autonomous</button>
+      </div>
+      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Visual preference only — <code>POST /api/profile</code> does not exist on the backend yet, so this does not change which trust ceiling actually applies server-side.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Emergency Stop</div>
+      <div class="estop-row">
+        <button id="estop-btn" class="btn-secondary estop-btn">Engage emergency stop</button>
+        <span class="status-line" id="estop-status"><span class="dot dot-green"></span> System armed</span>
+      </div>
+      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Visual/local control — disables Generate Proposal and Approve/Reject in this browser session. <code>POST /api/emergency/stop</code> does not exist on the backend yet.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Gmail Connection</div>
+      <p id="gmail-status-text">Checking…</p>
+      <p id="gmail-account-text" class="proposal-hint"></p>
+      <a href="/api/gmail/connect" id="gmail-connect-link" class="btn-primary" style="display:inline-block; width:auto; margin-top: var(--spacing-md); text-decoration:none;" hidden>Connect Gmail</a>
+      <div id="gmail-test-row" class="contact-add-row" style="margin-top: var(--spacing-md);" hidden>
+        <input type="text" id="gmail-test-to" placeholder="Send test email to…">
+        <button id="gmail-test-btn" class="btn-secondary" style="width:auto;">Send test</button>
+      </div>
+      <p id="gmail-test-result" class="proposal-hint"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Demo Mode</div>
+      <p class="proposal-hint">Reseeds the queue, audit trail, executions, and trust ledger to a clean baseline. Only available when the server runs with <code>ARGUS_DEMO_MODE=1</code>.</p>
+      <button id="demo-reset-btn" class="btn-secondary" style="width:auto; margin-top: var(--spacing-sm);">Reset demo state</button>
+      <p id="demo-reset-result" class="proposal-hint"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Google Calendar</div>
+      <p class="status-line"><span class="dot dot-amber"></span> Not built yet — Phase 6 not started.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Private Contacts</div>
+      <p class="proposal-hint">ARGUS will not read or act on emails involving these people. Stored locally — backend enforcement at proposal time requires Phase 8.</p>
+      <div class="contact-add-row">
+        <input type="text" id="contact-add-input" placeholder="Name or email address">
+        <button id="contact-add-btn" class="btn-secondary" style="width:auto;">Add</button>
+      </div>
+      <div id="contact-list"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

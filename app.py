@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 # Load .env so Google OAuth credentials (client id/secret) are available.
 try:
@@ -24,6 +24,9 @@ def _queue_error(result):
     return jsonify({"success": False, "error_code": code, "detail": result.get("detail", "")}), status
 
 
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
+
+
 def create_app():
     app = Flask(__name__)
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'argus-dev-key')
@@ -32,6 +35,28 @@ def create_app():
 
     with app.app_context():
         init_db()
+
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+        return response
+
+    # Scoped routes (not a blanket /<path:filename> catch-all) so an unmatched
+    # path like /api/nonexistent still 404s instead of colliding with the
+    # static rule's method set and surfacing as 405.
+    @app.route('/')
+    def index():
+        return send_from_directory(FRONTEND_DIR, 'index.html')
+
+    @app.route('/js/<path:filename>')
+    def frontend_js(filename):
+        return send_from_directory(os.path.join(FRONTEND_DIR, 'js'), filename)
+
+    @app.route('/css/<path:filename>')
+    def frontend_css(filename):
+        return send_from_directory(os.path.join(FRONTEND_DIR, 'css'), filename)
 
     @app.route('/health')
     def health():
