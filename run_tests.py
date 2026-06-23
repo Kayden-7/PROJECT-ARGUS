@@ -28,6 +28,7 @@ SUITES = [
     ('Independent -- Executor (Codex)',       'tests/test_executor_independent.py'),
     ('Independent -- Agent (Codex)',          'tests/test_agent_independent.py'),
     ('Independent -- Audit (Codex)',          'tests/test_audit_independent.py'),
+    ('Phase 8 (1/7) -- Fail-safe Schema',     'tests/test_phase_8_schema.py'),
 ]
 
 SUITE_SHORTCUTS = {
@@ -45,6 +46,8 @@ SUITE_SHORTCUTS = {
     'ind-executor': 11,
     'ind-agent':    12,
     'ind-audit':    13,
+    'phase8':       14,
+    'phase8-schema': 14,
 }
 
 GREEN  = '\033[92m'
