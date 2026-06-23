@@ -20,6 +20,7 @@ The two model calls (extract_proposal / draft_body) are the patchable seams;
 tests mock them so the suite never hits the live API.
 """
 import os
+import re
 import json
 import time
 import uuid
@@ -173,6 +174,66 @@ def verify_selected_email(email_id):
         raise RuntimeError(f"Selected email could not be verified: {str(e)[:100]}")
 
 
+# ── Deictic grounding: a selected email resolves "this"/"it" target fields ─────
+# Actions whose target is the selected message. The target fields are filled by
+# CODE from the verified, code-fetched metadata — GPT never sees the email, so it
+# cannot be steered by its contents (the locked anti-injection property). This
+# is the "fill" half of grounding that complements verify_selected_email().
+_EMAIL_ID_TARGET_ACTIONS = {
+    "email.delete", "email.archive", "email.mark_read", "email.star",
+    "email.move", "label.apply", "email.forward",
+}
+
+
+def _parse_address(raw):
+    """'ARGUS <project.argus.242@gmail.com>' -> 'project.argus.242@gmail.com'."""
+    m = re.search(r'<([^>]+)>', raw or '')
+    return (m.group(1) if m else (raw or '')).strip()
+
+
+# Required fields supplied AFTER promotion (the two-pass body drafting step),
+# so their absence at grounding time must not block promotion.
+_DEFERRED_FILL = {"body"}
+
+
+def _apply_grounding(p1, meta):
+    """Fill deictic target fields from the selected email's code-fetched metadata,
+    then decide promotion by RE-COMPUTING the genuinely-missing required fields
+    (GPT's free-text uncertainties are ignored — they're unreliable). Recipient
+    for a reply is ALWAYS the original sender (code-derived) — GPT never decides
+    it. Forward's recipient is a NEW destination and stays from the command."""
+    action = p1.get("action_type")
+    if action != "email.reply" and action not in _EMAIL_ID_TARGET_ACTIONS:
+        return p1  # non-deictic action; the selection is irrelevant
+
+    entities = p1.get("entities") or {}
+    eid = meta.get("id")
+
+    if action == "email.reply":
+        recipient = _parse_address(meta.get("sender"))
+        if recipient:
+            entities["recipient"] = recipient            # override; never GPT's
+    if eid:
+        entities["email_id"] = eid                       # which message
+    p1["entities"] = entities
+
+    # A grounded deictic action is a PROPOSAL iff every required field that is not
+    # deferred-filled is now present. Report clean field names for any real gap
+    # (e.g. forward with no recipient, move with no destination).
+    def _has(f):
+        v = entities.get(f)
+        return isinstance(v, str) and v.strip() != ""
+    missing = [f for f in REQUIRED_FIELDS.get(action, [])
+               if f not in _DEFERRED_FILL and not _has(f)]
+    if missing:
+        p1["status"] = "NEEDS_CLARIFICATION"
+        p1["uncertainties"] = missing
+    else:
+        p1["status"] = "PROPOSAL"
+        p1["uncertainties"] = []
+    return p1
+
+
 def run_agent(command, selected_email_id=None):
     """
     NL command -> canonical proposal (NOT executed). Returns an agent_status and,
@@ -206,6 +267,12 @@ def run_agent(command, selected_email_id=None):
 
     if not isinstance(p1, dict) or "status" not in p1:
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "malformed model output", **_versions()}
+
+    # Grounding fill: the selected email resolves deictic target fields by code
+    # (recipient for reply = sender; email_id for archive/delete/etc = the message),
+    # which can satisfy a "recipient"/"email_id" clarification and promote it.
+    if grounding_confirmed and selected_email_metadata:
+        p1 = _apply_grounding(p1, selected_email_metadata)
 
     if p1["status"] == "NEEDS_CLARIFICATION":
         # No executable fields are persisted or returned.
@@ -244,15 +311,33 @@ def run_agent(command, selected_email_id=None):
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "proposal failed validation",
                 "errors": vr["errors"], **_versions()}
 
-    pid = _store_proposal(proposal)
-    try:
-        from argus.audit import safe_record
-        safe_record("AGENT_PROPOSAL", correlation_id=pid, idempotency_key=f"{pid}:AGENT_PROPOSAL",
-                    action_type=action_type, outcome="PROPOSAL",
-                    payload={"action_type": action_type, "has_body": "body" in entities,
-                             "agent_prompt_version": AGENT_PROMPT_VERSION})
-    except Exception:
-        pass
+    # Phase 8 Part 3: atomic admission (dedup + rate limit + storage + audit in
+    # one txn). Disabled via ARGUS_ADMISSION_ENABLED=0 (test harness); on by default.
+    from argus import admission
+    if admission.admission_enabled():
+        adm = admission.admit(proposal, user_id="owner")
+        if not adm["admitted"]:
+            reason = adm["reason"]
+            if reason == "DUPLICATE_SUPPRESSED":
+                return {"agent_status": "AGENT_DUPLICATE",
+                        "agent_proposal_id": adm.get("existing_proposal_id"),
+                        "detail": "an identical action was submitted moments ago", **_versions()}
+            if reason == "RATE_LIMIT_EXCEEDED":
+                return {"agent_status": "AGENT_RATE_LIMITED",
+                        "retry_at": adm.get("retry_at"),
+                        "detail": "action limit reached", **_versions()}
+            return {"agent_status": "AGENT_UNAVAILABLE", "detail": reason, **_versions()}
+        pid = adm["proposal_id"]
+    else:
+        pid = _store_proposal(proposal)
+        try:
+            from argus.audit import safe_record
+            safe_record("AGENT_PROPOSAL", correlation_id=pid, idempotency_key=f"{pid}:AGENT_PROPOSAL",
+                        action_type=action_type, outcome="PROPOSAL",
+                        payload={"action_type": action_type, "has_body": "body" in entities,
+                                 "agent_prompt_version": AGENT_PROMPT_VERSION})
+        except Exception:
+            pass
     result = {"agent_status": "PROPOSAL", "agent_proposal_id": pid,
               "proposal": proposal, "grounding_confirmed": grounding_confirmed, **_versions()}
     if selected_email_metadata:

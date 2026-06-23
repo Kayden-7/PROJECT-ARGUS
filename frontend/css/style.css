@@ -6,23 +6,39 @@
 @import url('https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root {
-  --color-ink: #182128;
-  --color-secondary-ink: #667177;
-  --color-canvas: #F6F7F4;
-  --color-surface: #FEFEFC;
-  --color-slate-surface: #EEF1EE;
-  --color-hairline: #D9DEDA;
-  --color-strong-keyline: #293941;
+  /* Brand accent — ink navy. The single filled-navy element per view is the
+     primary button; accent also carries brand mark, avatar, selected state,
+     focus ring, and the (flattened) trust gauge arc. */
+  --color-accent: #1D3557;
+  --color-accent-hover: #16293F;
 
-  --color-evergreen: #0E6254;
-  --color-evergreen-soft: #DDECE6;
-  --color-amber: #98520A;
-  --color-amber-soft: #F7EDD8;
-  --color-oxblood: #7D2D32;
-  --color-oxblood-soft: #F5E7E6;
+  --color-ink: #1B2330;
+  --color-secondary-ink: #5B6B80;
+  --color-canvas: #F6F5F1;
+  --color-surface: #FFFFFF;
+  --color-slate-surface: #F3F3EF;
+  --color-hairline: #D9DBE0;
+  /* "Strong" border is a light 2px keyline (#C7CCD3), not a dark rule — the
+     Policy Decision card earns emphasis from the keyline + large badge, not a
+     heavy outline. */
+  --color-strong-keyline: #C7CCD3;
 
-  --color-proposal-tint: #EDF3F4;
-  --color-proposal-rule: #AFC4CA;
+  /* Semantic decision states — muted, never neon. text / soft-bg / rule / dot. */
+  --color-evergreen: #1F5C43;
+  --color-evergreen-soft: #E7F0EA;
+  --color-evergreen-rule: #C2D8CB;
+  --color-evergreen-dot: #2F7D57;
+  --color-amber: #8A5A14;
+  --color-amber-soft: #F6EDD9;
+  --color-amber-rule: #E6D3A8;
+  --color-amber-dot: #B07D1F;
+  --color-oxblood: #7A2E2E;
+  --color-oxblood-soft: #F3E6E3;
+  --color-oxblood-rule: #E0C4BF;
+  --color-oxblood-dot: #9A4040;
+
+  --color-proposal-tint: #EEF1F4;
+  --color-proposal-rule: #D8DDE4;
 
   --font-sans: 'Libre Franklin', 'Segoe UI', Arial, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
@@ -73,7 +89,7 @@ p { margin: 0; }
 a { color: var(--color-evergreen); }
 
 :focus-visible {
-  outline: 2px solid var(--color-evergreen);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
@@ -90,15 +106,20 @@ a { color: var(--color-evergreen); }
 
 .card.proposal-card {
   background: var(--color-proposal-tint);
-  border-left: 2px solid var(--color-proposal-rule);
-  border-right: 1px solid var(--color-hairline);
-  border-top: 1px solid var(--color-hairline);
-  border-bottom: 1px solid var(--color-hairline);
+  border: 1px solid var(--color-proposal-rule);
 }
 
+/* Policy Decision — center of gravity: white surface, light 2px keyline, and a
+   larger badge than anywhere else on the page. "What code decided." */
 .card.decision-card {
   border: 2px solid var(--color-strong-keyline);
 }
+.decision-card .decision-badge {
+  font-size: 15px;
+  padding: 9px 16px;
+  letter-spacing: 0.05em;
+}
+.decision-card .decision-badge::before { width: 10px; height: 10px; }
 
 .card-header {
   font-family: var(--font-mono);
@@ -137,54 +158,115 @@ a { color: var(--color-evergreen); }
   background-color: currentColor;
 }
 
-.decision-badge.allow { background: var(--color-evergreen-soft); color: var(--color-evergreen); border: 1px solid var(--color-evergreen); }
-.decision-badge.gated { background: var(--color-amber-soft); color: var(--color-amber); border: 1px solid var(--color-amber); }
-.decision-badge.block { background: var(--color-oxblood-soft); color: var(--color-oxblood); border: 1px solid var(--color-oxblood); }
+/* Muted state badges: soft fill + same-family rule + a distinct mid-tone square
+   dot. State is always carried by the word + color + dot, never color alone. */
+.decision-badge.allow { background: var(--color-evergreen-soft); color: var(--color-evergreen); border: 1px solid var(--color-evergreen-rule); }
+.decision-badge.gated { background: var(--color-amber-soft); color: var(--color-amber); border: 1px solid var(--color-amber-rule); }
+.decision-badge.block { background: var(--color-oxblood-soft); color: var(--color-oxblood); border: 1px solid var(--color-oxblood-rule); }
 .decision-badge.config { background: var(--color-slate-surface); color: var(--color-secondary-ink); border: 1px solid var(--color-hairline); }
+.decision-badge.allow::before { background-color: var(--color-evergreen-dot); }
+.decision-badge.gated::before { background-color: var(--color-amber-dot); }
+.decision-badge.block::before { background-color: var(--color-oxblood-dot); }
 
 /* ── top nav (breadcrumb + page links + avatar) ───────────────────────── */
 .app-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--spacing-md);
   padding: var(--spacing-md) var(--spacing-lg);
   border-bottom: 1px solid var(--color-hairline);
   background: var(--color-surface);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  flex-wrap: wrap;
 }
 .app-nav-left { display: flex; align-items: center; gap: var(--spacing-sm); }
+/* Brand mark — diamond-in-diamond: an outlined rotated square with a small
+   filled square centered inside it (both rotate together → diamond glyph). */
 .brand-mark {
   display: inline-flex;
-  width: 16px; height: 16px;
-  border: 2px solid var(--color-ink);
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  border: 2px solid var(--color-accent);
   transform: rotate(45deg);
   flex-shrink: 0;
+}
+.brand-mark::before {
+  content: "";
+  width: 6px; height: 6px;
+  background: var(--color-accent);
 }
 .brand-name {
   font-weight: 700;
   font-size: 16px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.18em;
+  color: var(--color-ink);
 }
 .breadcrumb-sep { color: var(--color-hairline); margin: 0 4px; }
 .breadcrumb-page { color: var(--color-secondary-ink); font-size: 15px; }
-.app-nav-right { display: flex; align-items: center; gap: var(--spacing-lg); }
+.app-nav-right { display: flex; align-items: center; gap: var(--spacing-lg); flex-wrap: wrap; row-gap: var(--spacing-sm); }
 .nav-link {
   font-size: 14px;
   color: var(--color-secondary-ink);
   text-decoration: none;
   cursor: pointer;
 }
-.nav-link:hover, .nav-link.active { color: var(--color-ink); }
+.nav-link:hover { color: var(--color-ink); }
+.nav-link.active { color: var(--color-accent); font-weight: 600; }
 .avatar {
   width: 28px; height: 28px;
   border-radius: 50%;
-  background: var(--color-ink);
+  background: var(--color-accent);
   color: var(--color-surface);
   display: flex; align-items: center; justify-content: center;
   font-size: 11px;
   font-weight: 600;
   font-family: var(--font-mono);
   flex-shrink: 0;
+  cursor: pointer;
 }
+.avatar:hover { opacity: 0.88; }
+
+/* ── account dropdown (avatar menu) ───────────────────────────────────────── */
+.avatar-wrap { position: relative; display: inline-flex; }
+.avatar-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 210px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(24, 33, 48, 0.10);
+  padding: 6px;
+  z-index: 100;
+}
+.avatar-menu-head {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--color-hairline);
+  margin-bottom: 6px;
+}
+.avatar-menu-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--color-ink); }
+.avatar-menu-sub { font-size: 12px; color: var(--color-secondary-ink); margin-top: 2px; }
+.avatar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 9px 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+  min-height: auto;
+}
+.avatar-menu-item:hover { background: var(--color-slate-surface); opacity: 1; }
 
 /* ── inbox panel ───────────────────────────────────────────────────────── */
 .inbox-header {
@@ -254,7 +336,7 @@ a { color: var(--color-evergreen); }
   cursor: pointer;
 }
 .inbox-item:hover { border-color: var(--color-secondary-ink); }
-.inbox-item.selected { border: 2px solid var(--color-ink); }
+.inbox-item.selected { border: 2px solid var(--color-accent); }
 .inbox-item-head { display: flex; justify-content: space-between; align-items: baseline; }
 .inbox-item-sender { font-weight: 600; font-size: 14px; }
 .inbox-item-time { font-family: var(--font-mono); font-size: 12px; color: var(--color-secondary-ink); }
@@ -294,7 +376,31 @@ a { color: var(--color-evergreen); }
   color: var(--color-secondary-ink);
   white-space: nowrap;
 }
-.proposal-block { margin-bottom: var(--spacing-lg); }
+/* AI Proposal — recessive layer of the Decision Spine: cool slate tint, full
+   border (no left-accent), slate marker. The model only suggests. */
+.proposal-block {
+  background: var(--color-proposal-tint);
+  border: 1px solid var(--color-proposal-rule);
+  border-radius: 4px;
+  padding: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+}
+.proposal-block .section-marker { color: var(--color-secondary-ink); }
+.proposal-disclaimer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: var(--spacing-md);
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-secondary-ink);
+}
+.proposal-disclaimer::before {
+  content: "";
+  width: 5px; height: 5px;
+  flex-shrink: 0;
+  background: var(--color-secondary-ink);
+}
 .proposal-header-row {
   display: flex;
   justify-content: space-between;
@@ -318,7 +424,7 @@ a { color: var(--color-evergreen); }
 }
 .proposal-row {
   display: grid;
-  grid-template-columns: 120px 1fr;
+  grid-template-columns: 120px minmax(0, 1fr);
   gap: var(--spacing-md);
   padding: 6px 0;
 }
@@ -329,7 +435,7 @@ a { color: var(--color-evergreen); }
   text-transform: uppercase;
   color: var(--color-secondary-ink);
 }
-.proposal-row-value { font-size: 15px; }
+.proposal-row-value { font-size: 15px; word-break: break-word; }
 
 /* ── banners (error / info) ───────────────────────────────────────────── */
 .banner {
@@ -356,10 +462,15 @@ a { color: var(--color-evergreen); }
 /* ── workbench layout ─────────────────────────────────────────────────── */
 .workbench-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 340px 1fr;
   gap: var(--spacing-xl);
   padding: var(--spacing-lg);
 }
+/* The decision spine reads as a single vertical column, not a full-width sprawl. */
+.command-panel { max-width: 680px; width: 100%; }
+/* Let both columns shrink below their content's intrinsic width so nowrap
+   inbox snippets truncate (ellipsis) instead of forcing the track wide. */
+.workbench-grid > section { min-width: 0; }
 @media (max-width: 1024px) {
   .workbench-grid { grid-template-columns: 1fr; }
 }
@@ -376,25 +487,18 @@ a { color: var(--color-evergreen); }
   width: 360px;
   text-align: left;
 }
-.login-mark { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-.login-mark h1 { font-size: 22px; }
+.login-mark { display: flex; align-items: center; gap: 13px; margin-bottom: 4px; }
+.login-mark h1 { font-size: 24px; letter-spacing: 0.2em; }
+/* Larger hero mark on login only — the nav keeps the compact 18px diamond. */
+.login-mark .brand-mark { width: 28px; height: 28px; }
+.login-mark .brand-mark::before { width: 9px; height: 9px; }
 .tagline { color: var(--color-secondary-ink); font-size: 13px; margin-bottom: var(--spacing-lg); }
 .page-description { color: var(--color-secondary-ink); font-size: 14px; line-height: 1.6; margin-bottom: var(--spacing-lg); max-width: 70ch; }
 .delay-row { display: flex; align-items: center; gap: var(--spacing-md); margin-top: var(--spacing-sm); }
 .delay-row input[type="range"] { width: 200px; accent-color: var(--color-evergreen); }
 #execution-delay-display { font-weight: 600; font-size: 14px; min-width: 90px; }
-
-/* ── NEEDS_CLARIFICATION note (Task 11) ────────────────────────────────── */
-.clarify-note {
-  display: block;
-  margin-top: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-amber-soft);
-  border-left: 3px solid var(--color-amber);
-  border-radius: 4px;
-  color: var(--color-amber);
-  font-size: 14px;
-}
+/* (.clarify-note styling lives further down — the redesign's version with a
+   .clarify-mark dot — so no duplicate rule is defined here.) */
 #login-form input { margin-bottom: var(--spacing-sm); }
 .login-error { min-height: 18px; color: var(--color-oxblood); font-size: 13px; margin: 0 0 var(--spacing-sm); }
 .hint { margin-top: var(--spacing-md); font-size: 12px; color: var(--color-secondary-ink); font-family: var(--font-mono); }
@@ -454,24 +558,6 @@ a { color: var(--color-evergreen); }
   border-color: var(--color-hairline);
 }
 
-.decision-badge.allow {
-  background: var(--color-evergreen-soft);
-  color: var(--color-evergreen);
-  border: 1px solid var(--color-evergreen);
-}
-
-.decision-badge.gated {
-  background: var(--color-amber-soft);
-  color: var(--color-amber);
-  border: 1px solid var(--color-amber);
-}
-
-.decision-badge.block {
-  background: var(--color-oxblood-soft);
-  color: var(--color-oxblood);
-  border: 1px solid var(--color-oxblood);
-}
-
 input, textarea, select {
   font-family: var(--font-sans);
   font-size: 15px;
@@ -502,21 +588,23 @@ button:hover { opacity: 0.8; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-primary {
-  background: var(--color-evergreen);
+  background: var(--color-accent);
   color: white;
   width: 100%;
   padding: 16px;
   min-height: 48px;
 }
+.btn-primary:hover { background: var(--color-accent-hover); opacity: 1; }
 
 .btn-secondary {
   background: var(--color-surface);
   color: var(--color-ink);
-  border: 1px solid var(--color-ink);
+  border: 1px solid var(--color-strong-keyline);
   width: 100%;
   padding: 16px;
   min-height: 48px;
 }
+.btn-secondary:hover { background: var(--color-slate-surface); opacity: 1; }
 
 .label {
   font-weight: 600;
@@ -526,17 +614,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-family: var(--font-mono);
 }
 
-/* Skeleton loaders */
-@keyframes shimmer {
-  0% { background-position: -100% 0; }
-  100% { background-position: 100% 0; }
-}
-
+/* Skeleton loaders — flat, no moving gradient (the visual direction forbids
+   glows/gradients; loaders read as quiet placeholders, not animation). */
 .skeleton-text {
   height: 16px;
-  background: linear-gradient(90deg, var(--color-hairline) 0%, var(--color-slate-surface) 50%, var(--color-hairline) 100%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  background: var(--color-slate-surface);
+  border: 1px solid var(--color-hairline);
   border-radius: 4px;
   margin-bottom: 8px;
 }
@@ -583,23 +666,144 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gauge-wrap { position: relative; display: inline-block; }
 .gauge-svg { width: 220px; height: 140px; }
 .gauge-track { fill: none; stroke: var(--color-hairline); stroke-width: 14; }
+/* Flat instrument: solid accent arc, no color interpolation/glow. Only the fill
+   position eases in. The numeric score is intentionally not shown — the band
+   label below is the readout. */
 .gauge-fill {
   fill: none;
-  stroke: var(--color-evergreen);
+  stroke: var(--color-accent);
   stroke-width: 14;
   stroke-linecap: round;
-  transition: stroke-dashoffset 0.6s ease, stroke 0.6s ease;
+  transition: stroke-dashoffset 0.6s ease;
 }
 .gauge-fill.is-loading { opacity: 0.4; }
-.gauge-ceiling-marker { stroke: var(--color-strong-keyline); stroke-width: 2; }
-.gauge-readout { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); text-align: center; }
-.gauge-value { font-family: var(--font-mono); font-size: 28px; font-weight: 600; color: var(--color-ink); }
-.gauge-label { font-size: 12px; color: var(--color-secondary-ink); }
+.gauge-ceiling-marker { stroke: var(--color-secondary-ink); stroke-width: 2; }
+.gauge-readout { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); text-align: center; }
+.gauge-mode {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-secondary-ink);
+  margin-bottom: 1px;
+}
+.gauge-label {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+}
 .gauge-meta { margin-top: var(--spacing-md); text-align: left; }
 .meta-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; color: var(--color-secondary-ink); }
 .meta-row span:last-child { color: var(--color-ink); font-family: var(--font-mono); font-size: 12px; }
 .recovery-row { color: var(--color-amber); }
 .recovery-row span:last-child { color: var(--color-amber); font-family: var(--font-sans); }
+
+/* ── all-actions trust strip (under the contextual gauge) ─────────────────── */
+.trust-strip-section {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-hairline);
+  text-align: left;
+}
+.trust-strip-header {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-secondary-ink);
+  margin-bottom: var(--spacing-sm);
+}
+/* Total trust chip — returns the headline gauge to the client-computed mean. */
+.total-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: 4px;
+  padding: 9px 11px;
+  margin-bottom: var(--spacing-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink);
+  min-height: auto;
+}
+.total-chip:hover { background: var(--color-slate-surface); opacity: 1; }
+.total-chip.is-active { border-color: var(--color-accent); color: var(--color-accent); }
+.total-chip-band {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-secondary-ink);
+}
+.total-chip.is-active .total-chip-band { color: var(--color-accent); }
+
+.trust-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.trust-strip-item {
+  border: 1px solid var(--color-hairline);
+  border-radius: 4px;
+  padding: 7px 9px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.trust-strip-item:hover { border-color: var(--color-secondary-ink); }
+.trust-strip-item.is-current { border-color: var(--color-accent); }
+.trust-strip-item.is-current .ts-action { color: var(--color-accent); font-weight: 600; }
+.ts-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.ts-action {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-band {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-secondary-ink);
+  white-space: nowrap;
+  flex: none;
+}
+.ts-bar {
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--color-slate-surface);
+  overflow: hidden;
+}
+.ts-bar > span { display: block; height: 100%; background: var(--color-accent); }
+
+/* ── clarification note (calm request for input, NOT an error) ────────────── */
+.clarify-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-slate-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+.clarify-note .clarify-mark {
+  width: 8px; height: 8px;
+  flex: none;
+  margin-top: 5px;
+  background: var(--color-secondary-ink);
+}
 
 /* ── decision card extras: trust delta / containment / trace ────────────── */
 .decision-delta { font-family: var(--font-mono); font-size: 13px; color: var(--color-secondary-ink); margin-top: var(--spacing-sm); }
@@ -635,7 +839,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: 10px 16px;
   min-height: auto;
 }
-.profile-opt.active { background: var(--color-evergreen-soft); color: var(--color-evergreen); border-color: var(--color-evergreen); }
+.profile-opt.active { background: var(--color-slate-surface); color: var(--color-accent); border: 2px solid var(--color-accent); }
 .estop-row { display: flex; align-items: center; gap: var(--spacing-lg); flex-wrap: wrap; margin-top: var(--spacing-sm); }
 .estop-btn { width: auto; min-height: auto; padding: 12px 20px; background: var(--color-oxblood-soft); color: var(--color-oxblood); border: 1px solid var(--color-oxblood); }
 .estop-btn.is-active { background: var(--color-oxblood); color: white; }
@@ -845,4 +1049,21 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 @keyframes toast-slide-in {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+
+/* Horizontal-scroll guard so wide tables never blow out the viewport on
+   tablet/mobile widths. (.audit-table is unused after Task 7 but harmless.) */
+.table-scroll { width: 100%; overflow-x: auto; }
+.table-scroll .audit-table { min-width: 640px; }
+
+/* ── narrow-width adjustments (tablet / mobile) ───────────────────────────── */
+@media (max-width: 720px) {
+  .app-nav-right { gap: var(--spacing-md); }
+  .nav-link { font-size: 13px; }
+  .audit-content { padding: var(--spacing-lg) var(--spacing-md); }
+}
+@media (max-width: 480px) {
+  .contact-add-row, #gmail-test-row, .estop-row { flex-direction: column; align-items: stretch; }
+  .contact-add-row .btn-secondary, #gmail-test-row .btn-secondary, .estop-row .estop-btn { width: 100%; }
+  .workbench-grid { padding: var(--spacing-md); gap: var(--spacing-lg); }
 }

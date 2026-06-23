@@ -8,25 +8,29 @@ import {
   fetchAudit, fetchAuditSummary, fetchTrustHistory, fetchGmailStatus, fetchTrustSnapshot,
   fetchTemplates, saveTemplate, deleteTemplate, matchTemplate, fetchExecutions, tickExecutions,
   verifyAuditChain, fetchAuditReplay, resetDemo, gmailTest,
+  setEmergencyStop, savePrivateContacts,
 } from './api.js';
 
 // Mirrors config.py ALL_ACTIONS — kept in sync manually, same approach used
 // throughout this build (no shared-schema endpoint exists to derive this from).
+// calendar.* is intentionally omitted from the UI (frontend-only decision —
+// the backend still supports it); this surfaces email.* / label.apply only.
 const ALL_ACTIONS = [
   'email.compose', 'email.archive', 'email.mark_read', 'email.star', 'email.move',
-  'calendar.accept', 'calendar.label', 'calendar.color', 'label.apply',
+  'label.apply',
   'email.send.external', 'email.send.internal', 'email.reply', 'email.forward',
-  'email.delete', 'calendar.create', 'calendar.modify', 'calendar.delete',
-  'calendar.reschedule', 'calendar.invite', 'calendar.decline',
+  'email.delete',
 ];
 
 let countdownHandle = null;
 
 const PAGES = ['login', 'workbench', 'audit', 'trust', 'templates', 'executions', 'settings'];
 
-// ── emergency stop (visual/local-only — POST /api/emergency/* does not exist
-// on the backend; mirrors the same honesty convention as the old dark-theme
-// build, which never pretended these routes were real) ──────────────────────
+// ── emergency stop ──────────────────────────────────────────────────────────
+// Local-first today: localStorage is the immediate UI source of truth, and the
+// toggle also fires setEmergencyStop() — a no-op (NOT_WIRED) until ESTOP_ENDPOINT
+// is set in api.js. Phase 8: fill that constant to go server-authoritative; the
+// only further change is to stop trusting localStorage as the canonical state.
 function isEstopActive() {
   return localStorage.getItem('argus.estop') === '1';
 }
@@ -58,6 +62,8 @@ function initEstop() {
     btn.addEventListener('click', () => {
       localStorage.setItem('argus.estop', isEstopActive() ? '0' : '1');
       applyEstopUI();
+      // Phase 8: flips to server-authoritative once ESTOP_ENDPOINT is set (no-op until then).
+      setEmergencyStop(isEstopActive());
     });
   }
   applyEstopUI();
@@ -125,13 +131,81 @@ const PAGE_LOADERS = {}; // populated below as each page's loader is defined
 
 function initGlobalNav() {
   document.querySelectorAll('.nav-link').forEach((link) => {
-    link.addEventListener('click', () => {
+    // These are hrefless anchors — make them real keyboard-operable controls.
+    link.setAttribute('role', 'link');
+    if (!link.hasAttribute('tabindex')) link.setAttribute('tabindex', '0');
+    const go = () => {
       const page = link.getAttribute('data-page');
       setState({ currentPage: page });
       window.history.replaceState({}, '', `?page=${page}`);
       if (PAGE_LOADERS[page]) PAGE_LOADERS[page]();
+    };
+    link.addEventListener('click', go);
+    link.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
     });
   });
+}
+
+// ── account menu (avatar dropdown → log out) ─────────────────────────────────
+// The avatar appears in every page's nav; only the active page's is visible.
+// Each gets its own dropdown so log out works from any screen.
+function closeAllUserMenus() {
+  document.querySelectorAll('.avatar-menu').forEach((m) => { m.hidden = true; });
+  document.querySelectorAll('.avatar[aria-expanded]').forEach((a) => a.setAttribute('aria-expanded', 'false'));
+}
+
+function logout() {
+  closeAllUserMenus();
+  sessionStorage.removeItem('argus_session');
+  setState({ isAuthenticated: false });
+  window.history.replaceState({}, '', '?page=login');
+  // Clear the login form so the next sign-in starts blank.
+  ['username', 'password'].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const err = document.getElementById('login-error');
+  if (err) err.textContent = '';
+}
+
+function initUserMenu() {
+  document.querySelectorAll('.avatar').forEach((avatar) => {
+    avatar.setAttribute('role', 'button');
+    avatar.setAttribute('tabindex', '0');
+    avatar.setAttribute('aria-haspopup', 'menu');
+    avatar.setAttribute('aria-expanded', 'false');
+    avatar.setAttribute('aria-label', 'Account menu');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'avatar-wrap';
+    avatar.parentNode.insertBefore(wrap, avatar);
+    wrap.appendChild(avatar);
+
+    const menu = document.createElement('div');
+    menu.className = 'avatar-menu';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    menu.innerHTML =
+      '<div class="avatar-menu-head"><div class="avatar-menu-name">PROJECT_ARGUS</div>' +
+      '<div class="avatar-menu-sub">Demo session</div></div>' +
+      '<button class="avatar-menu-item" role="menuitem" data-action="logout">Log out</button>';
+    wrap.appendChild(menu);
+
+    const toggle = (e) => {
+      e.stopPropagation();
+      const willOpen = menu.hidden;
+      closeAllUserMenus();
+      menu.hidden = !willOpen;
+      avatar.setAttribute('aria-expanded', String(willOpen));
+    };
+    avatar.addEventListener('click', toggle);
+    avatar.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+      else if (e.key === 'Escape') closeAllUserMenus();
+    });
+    menu.querySelector('[data-action="logout"]').addEventListener('click', logout);
+  });
+
+  // Close on any outside click. (Avatar/menu clicks stop propagation above.)
+  document.addEventListener('click', closeAllUserMenus);
 }
 
 function showBanner(message, { retryFn } = {}) {
@@ -298,10 +372,9 @@ function setProposalStatus(text) {
   document.getElementById('proposal-status').textContent = text;
 }
 
-// ── NEEDS_CLARIFICATION friendly rendering (Task 11) ─────────────────────
-// GPT-4o returns `uncertainties` as raw tokens (e.g. "recipient") or short
-// phrases. Map known field tokens to human words; pass anything else through
-// unchanged so a full sentence from the model still reads naturally.
+// AGENT_NEEDS_CLARIFICATION (Task 11): turn the bare uncertainty tokens into a
+// calm, human request for input (not an error). Known tokens get friendly
+// labels; unknowns fall back to the raw token so we never hide what's missing.
 const CLARIFY_LABELS = {
   recipient: 'a recipient',
   action_type: 'what action to take',
@@ -318,17 +391,14 @@ function renderClarification(tokens) {
   const parts = (tokens || [])
     .filter(Boolean)
     .map((t) => CLARIFY_LABELS[String(t).toLowerCase().trim()] || String(t));
-
   let missing = '';
   if (parts.length === 1) missing = parts[0];
   else if (parts.length > 1) missing = `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-
   const sentence = missing
     ? `ARGUS needs more detail before it can propose this — missing: ${missing}.`
     : 'ARGUS needs more detail before it can propose this.';
-
-  el.innerHTML = '<span class="clarify-note"></span>';
-  el.querySelector('.clarify-note').textContent = sentence;
+  el.innerHTML = '<div class="clarify-note"><span class="clarify-mark"></span><span></span></div>';
+  el.querySelector('.clarify-note span:last-child').textContent = sentence;
 }
 
 function renderProposal(proposal) {
@@ -431,7 +501,9 @@ function renderDecision(decision, decisionDict, queue, trust) {
   loadQueue();
 
   const proposal = getState().proposal;
-  if (proposal && proposal.action_type) refreshGauge(proposal.action_type);
+  // Keep the trust data fresh after a decision, but do NOT switch the gauge —
+  // the headline only changes when the user clicks a card/chip.
+  if (proposal && proposal.action_type) refreshTrustForAction(proposal.action_type);
 }
 
 // ── authorisation: approve / reject + countdown ──────────────────────────
@@ -740,38 +812,19 @@ function initComposer() {
 }
 
 // ── trust gauge widget (workbench "trust moment") ────────────────────────
-// Semicircle arc gauge ported from the old dark-theme build, restyled with
-// the current design tokens' hex values (evergreen/amber/oxblood) in place
-// of the old build's RED/AMBER/GREEN.
+// Semicircle arc gauge. Flat instrument per the Visual Direction: a single
+// accent-navy arc (stroke set in CSS, no per-value color interpolation/glow),
+// the fill position carries the score, and the band LABEL — not the number —
+// is the readout. The numeric trust value is intentionally never displayed.
 const GAUGE_CENTER = { x: 110, y: 120 };
 const GAUGE_RADIUS = 90;
 const GAUGE_ARC_LENGTH = Math.PI * GAUGE_RADIUS;
-
-function hexToRgb(hex) {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function interpolateColor(hex1, hex2, t) {
-  const a = hexToRgb(hex1), b = hexToRgb(hex2);
-  const r = Math.round(a[0] + (b[0] - a[0]) * t);
-  const g = Math.round(a[1] + (b[1] - a[1]) * t);
-  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
-  return `rgb(${r},${g},${bl})`;
-}
-
-function trustColor(value) {
-  const OXBLOOD = '#7D2D32', AMBER = '#98520A', EVERGREEN = '#0E6254';
-  if (value <= 50) return interpolateColor(OXBLOOD, AMBER, value / 50);
-  return interpolateColor(AMBER, EVERGREEN, (value - 50) / 50);
-}
 
 function setGaugeValue(value) {
   const clamped = Math.max(0, Math.min(100, value));
   const fill = document.getElementById('gauge-fill');
   fill.style.strokeDasharray = GAUGE_ARC_LENGTH;
   fill.style.strokeDashoffset = GAUGE_ARC_LENGTH * (1 - clamped / 100);
-  fill.style.stroke = trustColor(clamped);
 }
 
 function setCeilingMarker(ceiling) {
@@ -784,16 +837,147 @@ function setCeilingMarker(ceiling) {
   line.setAttribute('y2', GAUGE_CENTER.y - outerR * Math.sin(theta));
 }
 
+// Client-side trust → band label. Mirrors argus/trust_ledger.py TRUST_LABELS /
+// _trust_label (read-only reference, not imported): score <= threshold wins.
+// Used for the client-computed TOTAL TRUST headline, which has no backend label.
+function trustBandLabel(score) {
+  if (score <= 20) return 'Untrusted';
+  if (score <= 40) return 'Low Trust';
+  if (score <= 60) return 'Developing';
+  if (score <= 80) return 'Trusted';
+  return 'Highly Reliable';
+}
+
+// ── trust gauge: TOTAL TRUST default + per-action drill-down ─────────────────
+// The headline gauge defaults to TOTAL TRUST = the mean of every action type's
+// current trust (computed client-side from the same snapshots the strip uses —
+// no backend total endpoint). Clicking a strip card drills into that action's
+// contextual trust; the Total chip (or re-clicking the active card) returns.
+const trustSnapshots = {};   // action_type -> latest snapshot body
+let gaugeMode = 'total';      // 'total' | <action_type>
+let trustStripBuilt = false;
+
+function buildTrustStrip() {
+  const container = document.getElementById('trust-strip');
+  if (!container || trustStripBuilt) return;
+  container.innerHTML = '';
+  ALL_ACTIONS.forEach((action) => {
+    const item = document.createElement('div');
+    item.className = 'trust-strip-item';
+    item.setAttribute('data-action', action);
+    item.setAttribute('role', 'button');
+    item.setAttribute('tabindex', '0');
+    item.innerHTML =
+      '<div class="ts-top"><span class="ts-action"></span><span class="ts-band">—</span></div>' +
+      '<div class="ts-bar"><span style="width:0%"></span></div>';
+    item.querySelector('.ts-action').textContent = action;
+    item.addEventListener('click', () => onStripCardClick(action));
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStripCardClick(action); }
+    });
+    container.appendChild(item);
+  });
+  const chip = document.getElementById('total-trust-chip');
+  if (chip) chip.addEventListener('click', showTotalTrust);
+  trustStripBuilt = true;
+}
+
+// Click the active card again → deselect back to Total; otherwise drill in.
+function onStripCardClick(action) {
+  if (gaugeMode === action) showTotalTrust();
+  else showActionTrust(action);
+}
+
+function highlightTrustStrip(actionType) {
+  document.querySelectorAll('#trust-strip .trust-strip-item').forEach((el) => {
+    el.classList.toggle('is-current', el.getAttribute('data-action') === actionType);
+  });
+}
+
+function setTotalChipActive(active) {
+  const chip = document.getElementById('total-trust-chip');
+  if (chip) chip.classList.toggle('is-active', active);
+}
+
+function updateTrustStripItem(actionType, data) {
+  const item = document.querySelector(`#trust-strip [data-action="${actionType}"]`);
+  if (!item) return;
+  item.querySelector('.ts-band').textContent = data.label || '—';
+  const fill = item.querySelector('.ts-bar > span');
+  if (fill) fill.style.width = `${Math.max(0, Math.min(100, data.trust))}%`;
+}
+
+// Headline = mean of every action's current trust. Pure client-side; no fetch.
+function showTotalTrust() {
+  const vals = Object.values(trustSnapshots);
+  if (!vals.length) return;
+  gaugeMode = 'total';
+  const mean = vals.reduce((s, d) => s + (d.trust || 0), 0) / vals.length;
+  const widget = document.getElementById('trust-widget');
+  widget.hidden = false;
+  setGaugeValue(mean);
+  document.getElementById('gauge-ceiling').setAttribute('visibility', 'hidden');
+  const modeEl = document.getElementById('gauge-mode');
+  modeEl.hidden = false;
+  modeEl.textContent = 'TOTAL TRUST';
+  document.getElementById('gauge-label').textContent = trustBandLabel(mean);
+  document.getElementById('trust-widget-action').textContent = 'Total';
+  document.getElementById('gauge-meta').hidden = true;
+  const band = document.getElementById('total-chip-band');
+  if (band) band.textContent = trustBandLabel(mean);
+  highlightTrustStrip(null);
+  setTotalChipActive(true);
+}
+
+// Drill into one action's contextual trust (the per-action view). Only ever
+// triggered by an explicit card/chip click — never automatically.
+function showActionTrust(actionType) {
+  gaugeMode = actionType;
+  setTotalChipActive(false);
+  document.getElementById('gauge-mode').hidden = true;
+  document.getElementById('gauge-ceiling').setAttribute('visibility', 'visible');
+  document.getElementById('gauge-meta').hidden = false;
+  refreshGauge(actionType);
+}
+
+// Refresh one action's trust data (cache + strip cell) after a decision WITHOUT
+// changing what the gauge is showing — the headline only switches on user click.
+// Re-renders whichever view is currently active so it reflects the new value.
+async function refreshTrustForAction(actionType) {
+  const result = await fetchTrustSnapshot(actionType);
+  if (!result.ok || !result.body.success) return;
+  trustSnapshots[actionType] = result.body;
+  updateTrustStripItem(actionType, result.body);
+  if (gaugeMode === 'total') showTotalTrust();
+  else if (gaugeMode === actionType) refreshGauge(actionType);
+}
+
+async function loadTrustStrip() {
+  buildTrustStrip();
+  const results = await Promise.all(ALL_ACTIONS.map((a) => fetchTrustSnapshot(a)));
+  results.forEach((res, i) => {
+    if (res.ok && res.body && res.body.success) {
+      trustSnapshots[ALL_ACTIONS[i]] = res.body;
+      updateTrustStripItem(ALL_ACTIONS[i], res.body);
+    }
+  });
+  // Default headline = Total Trust, unless the user already drilled into an action.
+  if (gaugeMode === 'total') showTotalTrust();
+}
+
 async function refreshGauge(actionType) {
   const result = await fetchTrustSnapshot(actionType);
   const widget = document.getElementById('trust-widget');
   if (!result.ok || !result.body.success) { widget.hidden = true; return; }
   const data = result.body;
+  trustSnapshots[actionType] = data;   // keep the cache (and Total) fresh
   widget.hidden = false;
   setGaugeValue(data.trust);
   setCeilingMarker(data.ceiling);
-  document.getElementById('gauge-value').textContent = Math.round(data.trust);
   document.getElementById('gauge-label').textContent = data.label;
+  // Keep the strip's cell for this action fresh + highlighted (reuse this snapshot).
+  updateTrustStripItem(actionType, data);
+  highlightTrustStrip(actionType);
   document.getElementById('trust-widget-action').textContent = data.action_type;
   document.getElementById('meta-ceiling').textContent = `${data.ceiling} (${data.profile})`;
   document.getElementById('meta-modifier').textContent = `${data.overall_modifier.toFixed(2)}×`;
@@ -828,7 +1012,7 @@ function initWorkbench() {
 
   loadInbox();
   loadQueue();
-  refreshGauge('email.reply');
+  loadTrustStrip(); // fetches all per-action trusts, then shows TOTAL TRUST by default
 }
 
 // ── audit trail ──────────────────────────────────────────────────────────
@@ -1077,7 +1261,7 @@ function drawTrustGraph(points) {
   svg.innerHTML = '';
   document.getElementById('trust-tooltip').textContent = '';
   if (!points.length) {
-    svg.innerHTML = '<text x="400" y="140" text-anchor="middle" fill="#667177" font-size="14">No history yet for this action type.</text>';
+    svg.innerHTML = '<text x="400" y="140" text-anchor="middle" fill="#5B6B80" font-size="14">No history yet for this action type.</text>';
     return;
   }
 
@@ -1091,14 +1275,14 @@ function drawTrustGraph(points) {
   const axis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   axis.setAttribute('x1', pad); axis.setAttribute('y1', H - pad);
   axis.setAttribute('x2', W - pad); axis.setAttribute('y2', H - pad);
-  axis.setAttribute('stroke', '#D9DEDA');
+  axis.setAttribute('stroke', '#D9DBE0');
   svg.appendChild(axis);
 
   const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(p.timestamp)} ${y(p.resulting_trust)}`).join(' ');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('d', pathD);
   path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', '#0E6254');
+  path.setAttribute('stroke', '#1D3557');
   path.setAttribute('stroke-width', '2');
   svg.appendChild(path);
 
@@ -1107,7 +1291,7 @@ function drawTrustGraph(points) {
     dot.setAttribute('cx', x(p.timestamp));
     dot.setAttribute('cy', y(p.resulting_trust));
     dot.setAttribute('r', 4);
-    dot.setAttribute('fill', '#0E6254');
+    dot.setAttribute('fill', '#1D3557');
     dot.style.cursor = 'pointer';
     dot.addEventListener('mouseenter', () => {
       document.getElementById('trust-tooltip').textContent =
@@ -1366,10 +1550,11 @@ function initExecutionsPage() {
 // live execution pipeline. Load both whenever the page is opened.
 PAGE_LOADERS.executions = () => { initExecutionsPage(); loadQueue(); refreshExecutions(); };
 
-// ── private contacts (local-only — no backend route exists for this yet) ──
-// ARGUS should never process or decide on emails involving these people.
-// Real enforcement (blocking before the AI sees email content) requires
-// Phase 8 — this panel only maintains the list client-side for now.
+// ── private contacts ─────────────────────────────────────────────────────────
+// ARGUS should never process or decide on emails involving these people. Local-
+// first today (localStorage); every save also calls savePrivateContacts() — a
+// no-op (NOT_WIRED) until PRIVATE_CONTACTS_ENDPOINT is set in api.js. Phase 8
+// (server-side enforcement before the AI sees email content): fill that constant.
 const CONTACTS_KEY = 'argus.privateContacts';
 
 function loadContacts() {
@@ -1379,6 +1564,8 @@ function loadContacts() {
 
 function saveContacts(list) {
   localStorage.setItem(CONTACTS_KEY, JSON.stringify(list));
+  // Phase 8: flips to server-authoritative once PRIVATE_CONTACTS_ENDPOINT is set (no-op until then).
+  savePrivateContacts(list);
 }
 
 function renderContacts() {
@@ -1525,6 +1712,7 @@ function init() {
   setState({ isAuthenticated, currentPage: currentPageFromUrl() });
   initLogin();
   initGlobalNav();
+  initUserMenu();
   if (isAuthenticated) {
     initWorkbench();
     const page = getState().currentPage;

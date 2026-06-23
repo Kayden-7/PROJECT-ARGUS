@@ -12,6 +12,10 @@ import tempfile
 import traceback
 from pathlib import Path
 
+# Interpretation-contract tests, not Phase 8 admission: disable dedup/rate so
+# identical mocked proposals aren't suppressed. (Admission has its own suite.)
+os.environ["ARGUS_ADMISSION_ENABLED"] = "0"
+
 PROJECT_ROOT = os.environ.get("PROJECT_ARGUS_ROOT")
 if not PROJECT_ROOT:
     PROJECT_ROOT = str(Path(__file__).resolve().parents[1])

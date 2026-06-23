@@ -1,24 +1,154 @@
 import sqlite3
 import os
+import time
 
 DATABASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'instance', 'argus.db')
 
+REASON_MAX = 500
+
+
+def _hard_stop_snapshot(conn=None):
+    """Consistent single-read snapshot of the hard-stop control state.
+
+    Reads SYSTEM_HARD_STOP and HARD_STOP_EPOCH in ONE statement so a concurrent
+    toggle can never be observed half-applied. Returns
+    {ok:True, engaged, epoch(int>=0), updated_at, updated_by, reason} or
+    {ok:False, error}. Fails closed: missing row, a flag value other than
+    '0'/'1', or a malformed/negative epoch all yield ok:False.
+    """
+    own = conn is None
+    try:
+        if own:
+            conn = sqlite3.connect(DATABASE)
+            conn.row_factory = sqlite3.Row
+        rows = {r["key"]: r for r in conn.execute(
+            "SELECT key, value, updated_at, updated_by, reason FROM system_state "
+            "WHERE key IN ('SYSTEM_HARD_STOP','HARD_STOP_EPOCH')")}
+        hs = rows.get("SYSTEM_HARD_STOP")
+        ep = rows.get("HARD_STOP_EPOCH")
+        if hs is None or ep is None:
+            return {"ok": False, "error": "missing_state_row"}
+        if hs["value"] not in ("0", "1"):
+            return {"ok": False, "error": "malformed_hard_stop"}
+        try:
+            epoch = int(ep["value"])
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "malformed_epoch"}
+        if epoch < 0:
+            return {"ok": False, "error": "negative_epoch"}
+        return {"ok": True, "engaged": hs["value"] == "1", "epoch": epoch,
+                "updated_at": hs["updated_at"], "updated_by": hs["updated_by"],
+                "reason": hs["reason"]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:120]}
+    finally:
+        if own and conn is not None:
+            conn.close()
+
 
 def is_hard_stop() -> bool:
-    try:
-        db = sqlite3.connect(DATABASE)
-        row = db.execute("SELECT value FROM system_state WHERE key='SYSTEM_HARD_STOP'").fetchone()
-        db.close()
-        return row is not None and row[0] == '1'
-    except Exception:
+    """True if execution is halted. Fails CLOSED (True) on any read error."""
+    snap = _hard_stop_snapshot()
+    return True if not snap["ok"] else snap["engaged"]
+
+
+def hard_stop_status() -> dict:
+    """Status for the control endpoint. A degraded read reports engaged:True."""
+    snap = _hard_stop_snapshot()
+    if not snap["ok"]:
+        return {"ok": False, "engaged": True, "epoch": None,
+                "degraded": True, "error": snap["error"]}
+    return {"ok": True, "engaged": snap["engaged"], "epoch": snap["epoch"],
+            "updated_at": snap["updated_at"], "updated_by": snap["updated_by"],
+            "reason": snap["reason"]}
+
+
+def is_execution_stale(approval_epoch) -> bool:
+    """True (block) if an approved execution must NOT proceed: hard stop engaged,
+    epoch mismatch, or any uncertainty. Fails closed. (For the Part 6 executor
+    preflight.) bool is a subclass of int in Python — reject it explicitly."""
+    if (not isinstance(approval_epoch, int) or isinstance(approval_epoch, bool)
+            or approval_epoch < 0):
         return True
+    snap = _hard_stop_snapshot()
+    if not snap["ok"] or snap["engaged"]:
+        return True
+    return approval_epoch != snap["epoch"]
 
 
-def set_hard_stop(value: bool) -> None:
-    db = sqlite3.connect(DATABASE)
-    db.execute("UPDATE system_state SET value=? WHERE key='SYSTEM_HARD_STOP'", ('1' if value else '0',))
-    db.commit()
-    db.close()
+def set_hard_stop(engaged: bool, updated_by: str = "control", reason=None) -> dict:
+    """Toggle the emergency hard stop atomically. On a real off->on transition,
+    the flag update + HARD_STOP_EPOCH bump + audit event commit together or roll
+    back. Idempotent: a no-op toggle makes NO mutation and writes NO audit event.
+    Rejects (never truncates) reasons over 500 chars (C8)."""
+    if not isinstance(engaged, bool):
+        return {"success": False, "error_code": "INVALID_ENGAGED"}
+    if reason is not None:
+        if not isinstance(reason, str):
+            return {"success": False, "error_code": "INVALID_REASON"}
+        if len(reason) > REASON_MAX:
+            return {"success": False, "error_code": "REJECTION_REASON_TOO_LONG"}
+
+    conn = sqlite3.connect(DATABASE, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            return {"success": False, "error_code": "BUSY", "retryable": True}
+
+        snap = _hard_stop_snapshot(conn)
+        if not snap["ok"]:
+            conn.execute("ROLLBACK")
+            return {"success": False, "error_code": "STATE_UNAVAILABLE", "detail": snap["error"]}
+
+        # Idempotent: already in the requested state -> no write, no audit event.
+        if snap["engaged"] == engaged:
+            conn.execute("ROLLBACK")
+            return {"success": True, "engaged": engaged, "epoch": snap["epoch"], "transitioned": False}
+
+        now = int(time.time())
+        cur = conn.execute(
+            "UPDATE system_state SET value=?, updated_at=?, updated_by=?, reason=? "
+            "WHERE key='SYSTEM_HARD_STOP'",
+            ("1" if engaged else "0", now, updated_by, reason))
+        if cur.rowcount != 1:
+            conn.execute("ROLLBACK")
+            return {"success": False, "error_code": "STATE_WRITE_FAILED"}
+
+        new_epoch = snap["epoch"]
+        if engaged:  # guaranteed real off->on transition here -> bump epoch once
+            up = conn.execute(
+                "UPDATE system_state SET value=?, updated_at=? WHERE key='HARD_STOP_EPOCH'",
+                (str(snap["epoch"] + 1), now))
+            if up.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return {"success": False, "error_code": "EPOCH_WRITE_FAILED"}
+            new_epoch = snap["epoch"] + 1
+
+        from argus import audit
+        event = "SYSTEM_HARD_STOP_ENABLED" if engaged else "SYSTEM_HARD_STOP_DISABLED"
+        rec = audit.record(
+            event, action_type="system.emergency_stop",
+            outcome="ENGAGED" if engaged else "RELEASED", reason=reason,
+            payload={"engaged": engaged, "epoch": new_epoch,
+                     "updated_by": updated_by, "transitioned": True},
+            db=conn)
+        if not rec.get("recorded"):
+            conn.execute("ROLLBACK")
+            return {"success": False, "error_code": "AUDIT_WRITE_FAILED", "detail": rec.get("error")}
+
+        conn.execute("COMMIT")
+        return {"success": True, "engaged": engaged, "epoch": new_epoch, "transitioned": True}
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return {"success": False, "error_code": "HARD_STOP_FAILED", "detail": str(e)[:120]}
+    finally:
+        conn.close()
 
 
 def kernel_entry(proposal: dict) -> dict:

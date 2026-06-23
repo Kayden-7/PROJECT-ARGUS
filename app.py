@@ -1,4 +1,5 @@
 import os
+import hmac
 from flask import Flask, jsonify, request, send_from_directory
 
 # Load .env so Google OAuth credentials (client id/secret) are available.
@@ -26,6 +27,31 @@ def _queue_error(result):
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
 
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def _control_authorized(req):
+    """Gate for privileged control-plane POSTs (emergency stop, etc.).
+
+    If ARGUS_CONTROL_TOKEN is set: require a matching X-Control-Token
+    (constant-time compare); if an Origin is present it must match
+    ARGUS_CANONICAL_ORIGIN when that is configured. If the token is UNSET, this
+    is local-operator control only — accept solely loopback callers. This is
+    NOT authenticated owner-only access; a public deploy must set the token.
+    """
+    token = os.environ.get("ARGUS_CONTROL_TOKEN")
+    if token:
+        supplied = req.headers.get("X-Control-Token", "")
+        if not hmac.compare_digest(supplied, token):
+            return False
+        origin = req.headers.get("Origin")
+        canonical = os.environ.get("ARGUS_CANONICAL_ORIGIN")
+        if origin and canonical and origin != canonical:
+            return False
+        return True
+    # No token configured -> loopback-only local-operator control.
+    return (req.remote_addr or "") in _LOOPBACK
+
 
 def create_app():
     app = Flask(__name__)
@@ -36,12 +62,9 @@ def create_app():
     with app.app_context():
         init_db()
 
-    @app.after_request
-    def add_cors_headers(response):
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
-        return response
+    # No CORS headers: the frontend is served same-origin by this app, so JSON
+    # POSTs need neither CORS nor a preflight. A wildcard Access-Control-Allow-
+    # Origin would let any site call the control plane — removed deliberately.
 
     # Scoped routes (not a blanket /<path:filename> catch-all) so an unmatched
     # path like /api/nonexistent still 404s instead of colliding with the
@@ -61,6 +84,35 @@ def create_app():
     @app.route('/health')
     def health():
         return jsonify({"status": "ok", "system": "ARGUS", "version": "1.0"})
+
+    # ── Phase 8 Part 2: emergency stop (hard stop + epoch) ─────────────────────
+    @app.route('/api/system/emergency-stop', methods=['GET'])
+    def emergency_stop_status():
+        from argus import kernel
+        st = kernel.hard_stop_status()
+        return jsonify({"success": st.get("ok", True), **st}), 200
+
+    @app.route('/api/system/emergency-stop', methods=['POST'])
+    def emergency_stop_set():
+        from argus import kernel
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        engaged = body.get("engaged")
+        if not isinstance(engaged, bool):
+            return jsonify({"success": False, "error_code": "INVALID_ENGAGED",
+                            "detail": "engaged must be a boolean"}), 400
+        reason = body.get("reason")
+        result = kernel.set_hard_stop(engaged, updated_by="control", reason=reason)
+        if not result.get("success"):
+            code = result.get("error_code", "HARD_STOP_FAILED")
+            http = (400 if code in ("INVALID_ENGAGED", "INVALID_REASON", "REJECTION_REASON_TOO_LONG")
+                    else 503 if code in ("BUSY", "STATE_UNAVAILABLE") else 500)
+            return jsonify({"success": False, "error_code": code,
+                            "detail": result.get("detail", "")}), http
+        return jsonify({"success": True, "engaged": result["engaged"],
+                        "epoch": result["epoch"], "transitioned": result["transitioned"]}), 200
 
     # ── Phase 2→3 connector ───────────────────────────────────────────────────
 
@@ -143,6 +195,10 @@ def create_app():
 
     @app.route('/api/propose', methods=['POST'])
     def propose():
+        # Raw deterministic-policy API: still fully governed by policy + safety +
+        # trust (kernel_entry). Phase 8 admission (dedup + rate limit) is enforced
+        # on the agent proposal-creation path (run_agent), not here — this is the
+        # engine surface used by tests, not an AI action. (Hardening deferred.)
         resp, code = _route_proposal(request.get_json(silent=True))
         return jsonify(resp), code
 
