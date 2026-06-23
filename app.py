@@ -195,6 +195,10 @@ def create_app():
 
     @app.route('/api/propose', methods=['POST'])
     def propose():
+        # Raw deterministic-policy API: still fully governed by policy + safety +
+        # trust (kernel_entry). Phase 8 admission (dedup + rate limit) is enforced
+        # on the agent proposal-creation path (run_agent), not here — this is the
+        # engine surface used by tests, not an AI action. (Hardening deferred.)
         resp, code = _route_proposal(request.get_json(silent=True))
         return jsonify(resp), code
 

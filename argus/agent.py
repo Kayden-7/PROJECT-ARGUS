@@ -311,15 +311,33 @@ def run_agent(command, selected_email_id=None):
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "proposal failed validation",
                 "errors": vr["errors"], **_versions()}
 
-    pid = _store_proposal(proposal)
-    try:
-        from argus.audit import safe_record
-        safe_record("AGENT_PROPOSAL", correlation_id=pid, idempotency_key=f"{pid}:AGENT_PROPOSAL",
-                    action_type=action_type, outcome="PROPOSAL",
-                    payload={"action_type": action_type, "has_body": "body" in entities,
-                             "agent_prompt_version": AGENT_PROMPT_VERSION})
-    except Exception:
-        pass
+    # Phase 8 Part 3: atomic admission (dedup + rate limit + storage + audit in
+    # one txn). Disabled via ARGUS_ADMISSION_ENABLED=0 (test harness); on by default.
+    from argus import admission
+    if admission.admission_enabled():
+        adm = admission.admit(proposal, user_id="owner")
+        if not adm["admitted"]:
+            reason = adm["reason"]
+            if reason == "DUPLICATE_SUPPRESSED":
+                return {"agent_status": "AGENT_DUPLICATE",
+                        "agent_proposal_id": adm.get("existing_proposal_id"),
+                        "detail": "an identical action was submitted moments ago", **_versions()}
+            if reason == "RATE_LIMIT_EXCEEDED":
+                return {"agent_status": "AGENT_RATE_LIMITED",
+                        "retry_at": adm.get("retry_at"),
+                        "detail": "action limit reached", **_versions()}
+            return {"agent_status": "AGENT_UNAVAILABLE", "detail": reason, **_versions()}
+        pid = adm["proposal_id"]
+    else:
+        pid = _store_proposal(proposal)
+        try:
+            from argus.audit import safe_record
+            safe_record("AGENT_PROPOSAL", correlation_id=pid, idempotency_key=f"{pid}:AGENT_PROPOSAL",
+                        action_type=action_type, outcome="PROPOSAL",
+                        payload={"action_type": action_type, "has_body": "body" in entities,
+                                 "agent_prompt_version": AGENT_PROMPT_VERSION})
+        except Exception:
+            pass
     result = {"agent_status": "PROPOSAL", "agent_proposal_id": pid,
               "proposal": proposal, "grounding_confirmed": grounding_confirmed, **_versions()}
     if selected_email_metadata:
