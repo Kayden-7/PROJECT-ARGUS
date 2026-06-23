@@ -7,6 +7,11 @@ never hits the live OpenAI API. Three-angle: Normal + Hacker + Strict.
 """
 import os, sys, sqlite3
 
+# These tests verify agent INTERPRETATION (mocked model), not Phase 8 admission.
+# Disable dedup/rate admission so repeated/identical mocked proposals aren't
+# suppressed or throttled. Admission has its own suite (test_phase_8_admission).
+os.environ["ARGUS_ADMISSION_ENABLED"] = "0"
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, 'instance', 'argus.db')
 sys.path.insert(0, ROOT)
