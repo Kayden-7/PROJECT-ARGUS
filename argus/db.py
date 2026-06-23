@@ -5,6 +5,84 @@ from flask import g
 DATABASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'instance', 'argus.db')
 
 
+# ── Evolving-schema DDL ───────────────────────────────────────────────────────
+# approval_queue and pending_executions gain new status enum values in Phase 8.
+# SQLite cannot ALTER a CHECK constraint, so these two tables are defined as
+# constants reused by BOTH the fresh-create path and the rebuild migration
+# (_migrate_check_constraints). Keeping one source of truth prevents a fresh DB
+# and a migrated DB from drifting apart.
+
+APPROVAL_QUEUE_DDL = '''
+    CREATE TABLE IF NOT EXISTS approval_queue (
+        id TEXT PRIMARY KEY,
+        proposal_json TEXT NOT NULL,
+        decision_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+            'PENDING','APPROVED','REJECTED','EXPIRED','MANUAL_REVIEW',
+            'EXECUTED','CANCELLED',
+            'HELD','MANUAL_REVIEW_TIMEOUT','TRANSITION_LOCKED'
+        )),
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        approved_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        status_reason TEXT CHECK(status_reason IS NULL OR length(status_reason) <= 500),
+        execution_id TEXT,
+        -- Phase 8 fail-safe columns:
+        version INTEGER NOT NULL DEFAULT 0,                  -- CAS guard for transitions
+        approval_epoch INTEGER NOT NULL DEFAULT 0,           -- hard-stop epoch stamped at APPROVE
+        approval_generation INTEGER NOT NULL DEFAULT 0,      -- per-item, bumped each APPROVE
+        manual_review_generation INTEGER NOT NULL DEFAULT 0, -- bumped each MANUAL_REVIEW entry
+        manual_review_started_at INTEGER,                    -- for lazy 600s timeout
+        transition_lock_reason TEXT CHECK(transition_lock_reason IS NULL OR length(transition_lock_reason) <= 500),
+        transition_locked_at INTEGER
+    );
+'''
+
+# Columns copied from an old approval_queue during rebuild (the pre-Phase-8 set).
+_APPROVAL_QUEUE_OLD_COLS = (
+    "id, proposal_json, decision_json, status, created_at, expires_at, "
+    "approved_at, updated_at, status_reason, execution_id"
+)
+
+PENDING_EXECUTIONS_DDL = '''
+    CREATE TABLE IF NOT EXISTS pending_executions (
+        execution_id  TEXT PRIMARY KEY,
+        approval_id   TEXT,                  -- NOT inline-UNIQUE; see composite UNIQUE below
+        action_type   TEXT NOT NULL,
+        payload_json  TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'DRAFT_PENDING'
+                      CHECK(status IN (
+                          'DRAFT_PENDING','DRAFT_READY','SENDING',
+                          'COMPLETED','MANUAL_REVIEW','FAILED',
+                          'HELD','SUPERSEDED'
+                      )),
+        draft_id      TEXT,                  -- Gmail draft id (durable pre-send checkpoint)
+        message_id    TEXT,                  -- resulting sent message id
+        history_id    TEXT,                  -- mailbox historyId saved before send
+        owner_token   TEXT,                  -- claim token fencing all SENDING writes
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        status_reason TEXT CHECK(status_reason IS NULL OR length(status_reason) <= 500),
+        last_error    TEXT,
+        -- Phase 8: two-counter execution identity. UNIQUE(approval_id, approval_generation)
+        -- lets a SUPERSEDED execution coexist with a freshly-approved one (next generation).
+        approval_epoch      INTEGER NOT NULL DEFAULT 0,
+        approval_generation INTEGER NOT NULL DEFAULT 0,
+        approved_at   INTEGER NOT NULL,
+        execute_after INTEGER NOT NULL,
+        created_at    INTEGER NOT NULL DEFAULT 0,
+        updated_at    INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(approval_id, approval_generation)
+    );
+'''
+
+_PENDING_EXEC_OLD_COLS = (
+    "execution_id, approval_id, action_type, payload_json, status, draft_id, "
+    "message_id, history_id, owner_token, attempt_count, status_reason, "
+    "last_error, approved_at, execute_after, created_at, updated_at"
+)
+
+
 def get_db():
     if 'db' not in g:
         os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
@@ -18,6 +96,58 @@ def close_db(e=None):
     db = g.pop('db', None)
     if db is not None:
         db.close()
+
+
+def _migrate_check_constraints(db):
+    """Rebuild approval_queue / pending_executions on an existing DB whose status
+    CHECK predates Phase 8. Guarded by a marker string so it runs at most once.
+    Preserves all existing rows; new columns take their DEFAULTs.
+
+    The rebuild (RENAME -> CREATE -> copy -> DROP) runs inside ONE explicit
+    transaction: SQLite DDL is transactional, so a crash mid-rebuild rolls back
+    cleanly and never strands a half-renamed *_old table holding live data."""
+    def _needs(table, marker):
+        row = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        return bool(row and row[0] and marker not in row[0])
+
+    aq_needs = _needs('approval_queue', 'TRANSITION_LOCKED')
+    pe_needs = _needs('pending_executions', 'SUPERSEDED')
+    if not (aq_needs or pe_needs):
+        return
+
+    # Take explicit control of the transaction. executescript() would force an
+    # implicit COMMIT, so use execute() on the single-statement DDL constants.
+    prev_iso = db.isolation_level
+    db.isolation_level = None
+    try:
+        db.execute("BEGIN")
+        if aq_needs:
+            db.execute("ALTER TABLE approval_queue RENAME TO approval_queue_old")
+            db.execute(APPROVAL_QUEUE_DDL)
+            db.execute(
+                f"INSERT INTO approval_queue ({_APPROVAL_QUEUE_OLD_COLS}) "
+                f"SELECT {_APPROVAL_QUEUE_OLD_COLS} FROM approval_queue_old"
+            )
+            db.execute("DROP TABLE approval_queue_old")
+        if pe_needs:
+            # Drop the old single-column UNIQUE index (idx_pending_approval) which
+            # would block supersede + re-approve under the new composite UNIQUE.
+            db.execute("DROP INDEX IF EXISTS idx_pending_approval")
+            db.execute("ALTER TABLE pending_executions RENAME TO pending_executions_old")
+            db.execute(PENDING_EXECUTIONS_DDL)
+            db.execute(
+                f"INSERT INTO pending_executions ({_PENDING_EXEC_OLD_COLS}) "
+                f"SELECT {_PENDING_EXEC_OLD_COLS} FROM pending_executions_old"
+            )
+            db.execute("DROP TABLE pending_executions_old")
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    finally:
+        db.isolation_level = prev_iso
 
 
 def init_db():
@@ -56,19 +186,6 @@ def init_db():
             PRIMARY KEY(contact, action_type)
         );
 
-        CREATE TABLE IF NOT EXISTS approval_queue (
-            id TEXT PRIMARY KEY,
-            proposal_json TEXT NOT NULL,
-            decision_json TEXT NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ('PENDING','APPROVED','REJECTED','EXPIRED','MANUAL_REVIEW','EXECUTED','CANCELLED')),
-            created_at INTEGER NOT NULL,
-            expires_at INTEGER NOT NULL,
-            approved_at INTEGER,
-            updated_at INTEGER NOT NULL,
-            status_reason TEXT,
-            execution_id TEXT
-        );
-
         CREATE TABLE IF NOT EXISTS trust_current (
             action_type       TEXT PRIMARY KEY,
             trust_current     REAL NOT NULL CHECK(trust_current >= 0 AND trust_current <= 100),
@@ -102,27 +219,6 @@ def init_db():
             window_start INTEGER NOT NULL,
             count INTEGER NOT NULL,
             PRIMARY KEY(action_category, window_start)
-        );
-
-        CREATE TABLE IF NOT EXISTS pending_executions (
-            execution_id  TEXT PRIMARY KEY,
-            approval_id   TEXT UNIQUE,        -- queue item id; UNIQUE = one execution per approval
-            action_type   TEXT NOT NULL,
-            payload_json  TEXT NOT NULL,
-            status        TEXT NOT NULL DEFAULT 'DRAFT_PENDING'
-                          CHECK(status IN ('DRAFT_PENDING','DRAFT_READY','SENDING',
-                                           'COMPLETED','MANUAL_REVIEW','FAILED')),
-            draft_id      TEXT,               -- Gmail draft id (durable pre-send checkpoint)
-            message_id    TEXT,               -- resulting sent message id
-            history_id    TEXT,               -- mailbox historyId saved before send (review evidence)
-            owner_token   TEXT,               -- claim token fencing all SENDING writes
-            attempt_count INTEGER NOT NULL DEFAULT 0,
-            status_reason TEXT,               -- why it's in MANUAL_REVIEW / FAILED
-            last_error    TEXT,
-            approved_at   INTEGER NOT NULL,
-            execute_after INTEGER NOT NULL,
-            created_at    INTEGER NOT NULL DEFAULT 0,
-            updated_at    INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS demo_emails (
@@ -190,7 +286,43 @@ def init_db():
             CHECK (max_sentences BETWEEN 1 AND 30),
             CHECK (max_paragraphs BETWEEN 1 AND 8)
         );
+
+        -- ── Phase 8 fail-safe tables ──────────────────────────────────────────
+        -- Private-contact protection: relationships excluded from AI processing.
+        -- Match is EXACT normalized address only (no +tag strip, no name match).
+        CREATE TABLE IF NOT EXISTS private_contacts (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_email TEXT NOT NULL UNIQUE,
+            display_label    TEXT,
+            enabled          INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+            created_at       INTEGER NOT NULL,
+            updated_at       INTEGER NOT NULL
+        );
+
+        -- Duplicate detection: exact-canonical proposal hash, short TTL window.
+        CREATE TABLE IF NOT EXISTS proposal_dedup (
+            user_id       TEXT NOT NULL,
+            proposal_hash TEXT NOT NULL,
+            proposal_id   TEXT NOT NULL,
+            created_at    INTEGER NOT NULL,
+            expires_at    INTEGER NOT NULL,
+            PRIMARY KEY (user_id, proposal_hash)
+        );
+
+        -- Invalid-transition rate limiting: evidence trail per queue item.
+        CREATE TABLE IF NOT EXISTS queue_transition_attempts (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            queue_id       TEXT NOT NULL,
+            attempted_from TEXT,
+            attempted_to   TEXT,
+            valid          INTEGER NOT NULL CHECK(valid IN (0,1)),
+            created_at     INTEGER NOT NULL
+        );
     ''')
+
+    # approval_queue + pending_executions: single-source DDL (also used by rebuild).
+    db.executescript(APPROVAL_QUEUE_DDL)
+    db.executescript(PENDING_EXECUTIONS_DDL)
 
     # Phase 5 Part 3: scope-uniqueness for templates (one row per scope rank).
     # Partial unique indexes are the backstop; code-side upsert is the normal path.
@@ -220,36 +352,26 @@ def init_db():
         except Exception:
             pass  # column already exists
 
-    # Migration: Phase 5 Part 2 execution-state columns on pending_executions
+    # Migration: per-row metadata on system_state (Phase 8 control-plane audit).
     for col, definition in [
-        ("approval_id",   "TEXT"),
-        ("status",        "TEXT NOT NULL DEFAULT 'DRAFT_PENDING'"),
-        ("draft_id",      "TEXT"),
-        ("message_id",    "TEXT"),
-        ("history_id",    "TEXT"),
-        ("owner_token",   "TEXT"),
-        ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
-        ("status_reason", "TEXT"),
-        ("last_error",    "TEXT"),
-        ("created_at",    "INTEGER NOT NULL DEFAULT 0"),
-        ("updated_at",    "INTEGER NOT NULL DEFAULT 0"),
+        ("updated_at", "INTEGER"),
+        ("updated_by", "TEXT"),
+        ("reason",     "TEXT"),
     ]:
         try:
-            db.execute(f"ALTER TABLE pending_executions ADD COLUMN {col} {definition}")
+            db.execute(f"ALTER TABLE system_state ADD COLUMN {col} {definition}")
         except Exception:
             pass  # column already exists
-    # UNIQUE index on approval_id (ALTER can't add UNIQUE inline on existing tables)
-    try:
-        db.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approval ON pending_executions(approval_id)"
-        )
-    except Exception:
-        pass
 
-    db.execute("INSERT OR IGNORE INTO system_state VALUES ('SYSTEM_HARD_STOP', '0')")
-    db.execute("INSERT OR IGNORE INTO system_state VALUES ('ACTIVE_PROFILE', 'Balanced')")
-    db.execute("INSERT OR IGNORE INTO system_state VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
-    db.execute("INSERT OR IGNORE INTO system_state VALUES ('UNDO_WINDOW_SECONDS', '30')")
+    # Migration: rebuild evolving tables on an existing pre-Phase-8 DB so the new
+    # status enum values are accepted and the composite UNIQUE replaces the old one.
+    _migrate_check_constraints(db)
+
+    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('SYSTEM_HARD_STOP', '0')")
+    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('HARD_STOP_EPOCH', '0')")
+    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('ACTIVE_PROFILE', 'Balanced')")
+    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
+    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('UNDO_WINDOW_SECONDS', '30')")
 
     db.execute("INSERT OR IGNORE INTO permission_profiles VALUES ('Balanced', 1)")
     db.execute("INSERT OR IGNORE INTO permission_profiles VALUES ('Strict', 0)")
