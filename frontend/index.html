@@ -30,7 +30,7 @@
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
       <span class="breadcrumb-sep">/</span>
-      <span class="breadcrumb-page">Decision Workbench</span>
+      <span class="breadcrumb-page">Workbench</span>
     </div>
     <div class="app-nav-right">
       <a class="nav-link" data-page="audit">Audit Trail</a>
@@ -53,12 +53,26 @@
       <div class="inbox-header">
         <span class="inbox-title">Inbox &middot; Read-only</span>
         <span class="inbox-count" id="inbox-count">0</span>
+        <div id="inbox-filter-toggle" class="inbox-filter-toggle">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="unread">Unread</button>
+        </div>
       </div>
       <div id="inbox-loader" class="skeleton-text" style="width:100%;height:64px;" hidden></div>
       <div id="inbox-items"></div>
+      <div id="inbox-pagination" class="inbox-pagination"></div>
     </section>
 
     <section class="command-panel">
+      <div id="selected-email-preview" class="email-preview-card" hidden>
+        <div class="preview-header">
+          <h4 id="preview-sender">From: —</h4>
+          <button class="preview-close" id="preview-close" aria-label="Clear selection">×</button>
+        </div>
+        <div class="preview-subject" id="preview-subject">Subject: —</div>
+        <div class="preview-snippet" id="preview-snippet"></div>
+      </div>
+
       <p class="command-label">Your command</p>
       <div class="card" style="margin-bottom: var(--spacing-md);">
         <textarea id="command-input" placeholder="e.g., 'Reply saying I'll be there.'" maxlength="500" rows="2"></textarea>
@@ -112,11 +126,6 @@
       </div>
     </section>
   </div>
-
-  <section id="queue-panel" class="card">
-    <h3>Queue</h3>
-    <div id="queue-items"></div>
-  </section>
 </div>
 
 <div id="audit-page" class="page">
@@ -138,23 +147,19 @@
   </nav>
   <div class="audit-content">
     <h2>Audit Trail</h2>
-    <p class="tagline">Every evaluation is recorded. Rows are clickable to inspect the full event. Nothing here animates.</p>
+    <p class="tagline">Every evaluation is recorded. Click any row to see the full event details.</p>
     <div class="audit-toolbar">
       <p id="audit-summary" class="command-context"></p>
       <button id="audit-verify-btn" class="btn-secondary" style="width:auto;">Verify chain integrity</button>
     </div>
     <p id="audit-verify-result" class="proposal-hint"></p>
-    <table class="audit-table">
-      <thead>
-        <tr><th>Timestamp</th><th>Action</th><th>Outcome</th><th>Actor</th></tr>
-      </thead>
-      <tbody id="audit-tbody"></tbody>
-    </table>
-    <div id="audit-replay-panel" class="card" hidden style="margin-top: var(--spacing-lg);">
-      <div class="card-header">Replay</div>
-      <p id="audit-replay-label" class="proposal-hint"></p>
-      <pre id="audit-replay-events" class="trace-pre"></pre>
+    <div class="audit-filter-row">
+      <label for="audit-action-filter">Filter by reason / event:</label>
+      <select id="audit-action-filter">
+        <option value="">All</option>
+      </select>
     </div>
+    <div id="audit-groups"></div>
   </div>
 </div>
 
@@ -177,6 +182,7 @@
   </nav>
   <div class="audit-content">
     <h2>Trust History</h2>
+    <p class="page-description">Track how trust scores evolve for each action type over time. Once you approve actions and ARGUS executes them, their trust evolution appears here.</p>
     <p class="command-label" style="margin: var(--spacing-lg) 0 var(--spacing-sm);">Action type</p>
     <select id="trust-action-type"></select>
     <div id="trust-graph-container" style="margin-top: var(--spacing-lg);">
@@ -192,7 +198,7 @@
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
       <span class="breadcrumb-sep">/</span>
-      <span class="breadcrumb-page">Communication Boundaries</span>
+      <span class="breadcrumb-page">Templates</span>
     </div>
     <div class="app-nav-right">
       <a class="nav-link" data-page="workbench">Workbench</a>
@@ -204,7 +210,7 @@
     </div>
   </nav>
   <div class="audit-content">
-    <h2>Communication Boundaries</h2>
+    <h2>Templates</h2>
     <p class="tagline">Structural writing-style limits per contact and/or action. Validator-enforced, not an "AI humanizer."</p>
 
     <div class="card template-form-card">
@@ -309,7 +315,7 @@
       <span class="brand-mark"></span>
       <span class="brand-name">ARGUS</span>
       <span class="breadcrumb-sep">/</span>
-      <span class="breadcrumb-page">Execution Status</span>
+      <span class="breadcrumb-page">Executions</span>
     </div>
     <div class="app-nav-right">
       <a class="nav-link" data-page="workbench">Workbench</a>
@@ -321,10 +327,20 @@
     </div>
   </nav>
   <div class="audit-content">
-    <h2>Execution Status</h2>
-    <p class="tagline">Live pipeline for approved actions ARGUS is sending. On any uncertainty, it stops and asks — never a silent double-send or lost email.</p>
-    <button id="executions-tick-btn" class="btn-secondary" style="width:auto; margin: var(--spacing-md) 0;">Process now</button>
-    <div id="execution-list"></div>
+    <h2>Executions</h2>
+
+    <section id="approval-queue-section" class="execution-section">
+      <h3>Approval Queue</h3>
+      <p class="section-description">Pending your decision. Review and approve actions before they execute. Approved actions move to execution below.</p>
+      <div id="queue-items"></div>
+    </section>
+
+    <section id="live-execution-section" class="execution-section">
+      <h3>Live Execution</h3>
+      <p class="section-description">Actions in progress. Watch the live pipeline as ARGUS sends approved actions. On any uncertainty, execution stops and asks — never a silent double-send or lost email.</p>
+      <button id="executions-tick-btn" class="btn-secondary" style="width:auto; margin: 0 0 var(--spacing-md);">Process now</button>
+      <div id="execution-list"></div>
+    </section>
   </div>
 </div>
 
@@ -350,6 +366,9 @@
 
     <div class="card" style="margin-top: var(--spacing-lg);">
       <div class="card-header">Policy Profile</div>
+      <!-- NOTE (Task 9b): Policy Profile selection is currently visual-only.
+           Clarify with Kayden whether this should control backend trust decisions
+           (no POST /api/profile endpoint exists yet). -->
       <div class="profile-switcher" id="profile-switcher">
         <button class="profile-opt" data-profile="Strict">Strict</button>
         <button class="profile-opt" data-profile="Balanced">Balanced</button>
@@ -365,6 +384,16 @@
         <span class="status-line" id="estop-status"><span class="dot dot-green"></span> System armed</span>
       </div>
       <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Visual/local control — disables Generate Proposal and Approve/Reject in this browser session. <code>POST /api/emergency/stop</code> does not exist on the backend yet.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Execution Delay</div>
+      <p class="proposal-hint">High-risk actions (delete, send, forward, reply) wait before executing, giving you time to review. Adjust how long that window is.</p>
+      <div class="delay-row">
+        <input type="range" id="execution-delay-slider" min="1" max="4" value="4">
+        <span id="execution-delay-display">4 minutes</span>
+      </div>
+      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Preference saved locally for now — the backend enforcement of this delay arrives in Phase 8 Part 5.</p>
     </div>
 
     <div class="card">

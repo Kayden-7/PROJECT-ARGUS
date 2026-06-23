@@ -158,13 +158,45 @@ function clearBanner() {
 }
 
 // ── workbench: inbox ─────────────────────────────────────────────────────
-function renderInboxItems(messages) {
+// Pagination (Task 4) + All/Unread filter (Task 5). Note: the Gmail backend
+// (argus/gmail_client.py:list_messages) returns id/subject/sender/receivedAt/
+// snippet only — there is NO read/unread flag — so the Unread filter degrades
+// to an honest empty state rather than silently hiding everything.
+const INBOX_ITEMS_PER_PAGE = 20;
+let inboxCurrentPage = 1;
+let inboxFilterMode = 'all';
+
+function getFilteredInbox() {
+  const all = getState().inboxEmails || [];
+  if (inboxFilterMode === 'unread') return all.filter((e) => e.isUnread === true);
+  return all;
+}
+
+function renderInbox() {
+  const messages = getFilteredInbox();
   const container = document.getElementById('inbox-items');
+  const pager = document.getElementById('inbox-pagination');
   container.innerHTML = '';
+  pager.innerHTML = '';
   document.getElementById('inbox-count').textContent = messages.length;
-  messages.forEach((msg) => {
+
+  if (!messages.length) {
+    container.innerHTML = inboxFilterMode === 'unread'
+      ? '<p class="empty-state">Read/unread status isn’t available from Gmail metadata, so no messages can be marked unread here.</p>'
+      : '<p class="empty-state">No messages.</p>';
+    return;
+  }
+
+  const totalPages = Math.ceil(messages.length / INBOX_ITEMS_PER_PAGE);
+  if (inboxCurrentPage > totalPages) inboxCurrentPage = 1;
+  const start = (inboxCurrentPage - 1) * INBOX_ITEMS_PER_PAGE;
+  const pageMessages = messages.slice(start, start + INBOX_ITEMS_PER_PAGE);
+  const selectedId = getState().selectedEmailId;
+
+  pageMessages.forEach((msg) => {
     const item = document.createElement('div');
     item.className = 'inbox-item';
+    if (msg.id === selectedId) item.classList.add('selected');
     item.setAttribute('data-email-id', msg.id);
 
     const head = document.createElement('div');
@@ -193,6 +225,28 @@ function renderInboxItems(messages) {
     item.addEventListener('click', () => selectEmail(msg));
     container.appendChild(item);
   });
+
+  if (totalPages > 1) {
+    for (let page = 1; page <= totalPages; page++) {
+      const btn = document.createElement('button');
+      btn.className = `pagination-btn${page === inboxCurrentPage ? ' active' : ''}`;
+      btn.textContent = String(page);
+      btn.addEventListener('click', () => { inboxCurrentPage = page; renderInbox(); });
+      pager.appendChild(btn);
+    }
+  }
+}
+
+// Back-compat shim: loadInbox calls renderInboxItems(messages) after setState.
+function renderInboxItems() { inboxCurrentPage = 1; renderInbox(); }
+
+function setInboxFilter(mode) {
+  inboxFilterMode = mode;
+  document.querySelectorAll('#inbox-filter-toggle .filter-btn').forEach((b) => {
+    b.classList.toggle('active', b.getAttribute('data-filter') === mode);
+  });
+  inboxCurrentPage = 1;
+  renderInbox();
 }
 
 function selectEmail(msg) {
@@ -201,6 +255,20 @@ function selectEmail(msg) {
     el.classList.toggle('selected', el.getAttribute('data-email-id') === msg.id);
   });
   document.getElementById('command-email-context').textContent = `on: ${msg.subject || '(no subject)'}`;
+
+  // Preview card (Task 6)
+  const preview = document.getElementById('selected-email-preview');
+  preview.hidden = false;
+  document.getElementById('preview-sender').textContent = `From: ${msg.sender || 'Unknown'}`;
+  document.getElementById('preview-subject').textContent = `Subject: ${msg.subject || '(no subject)'}`;
+  document.getElementById('preview-snippet').textContent = msg.snippet || '(no preview)';
+}
+
+function clearEmailSelection() {
+  setState({ selectedEmailId: null });
+  document.querySelectorAll('.inbox-item').forEach((el) => el.classList.remove('selected'));
+  document.getElementById('command-email-context').textContent = '';
+  document.getElementById('selected-email-preview').hidden = true;
 }
 
 async function loadInbox() {
@@ -230,6 +298,39 @@ function setProposalStatus(text) {
   document.getElementById('proposal-status').textContent = text;
 }
 
+// ── NEEDS_CLARIFICATION friendly rendering (Task 11) ─────────────────────
+// GPT-4o returns `uncertainties` as raw tokens (e.g. "recipient") or short
+// phrases. Map known field tokens to human words; pass anything else through
+// unchanged so a full sentence from the model still reads naturally.
+const CLARIFY_LABELS = {
+  recipient: 'a recipient',
+  action_type: 'what action to take',
+  action: 'what action to take',
+  subject: 'a subject',
+  event: 'an event or time',
+  time: 'a time',
+  date: 'a date',
+  body: 'the message content',
+};
+
+function renderClarification(tokens) {
+  const el = document.getElementById('proposal-status');
+  const parts = (tokens || [])
+    .filter(Boolean)
+    .map((t) => CLARIFY_LABELS[String(t).toLowerCase().trim()] || String(t));
+
+  let missing = '';
+  if (parts.length === 1) missing = parts[0];
+  else if (parts.length > 1) missing = `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+
+  const sentence = missing
+    ? `ARGUS needs more detail before it can propose this — missing: ${missing}.`
+    : 'ARGUS needs more detail before it can propose this.';
+
+  el.innerHTML = '<span class="clarify-note"></span>';
+  el.querySelector('.clarify-note').textContent = sentence;
+}
+
 function renderProposal(proposal) {
   const block = document.getElementById('proposal-block');
   block.hidden = false;
@@ -251,6 +352,42 @@ function renderProposal(proposal) {
   } else {
     subjectRow.hidden = true;
   }
+}
+
+// ── toast: queued-action notification (Task 3) ───────────────────────────
+// The View button routes through the app's real page router (setState +
+// PAGE_LOADERS), not a full page reload — app.js is a module and the page
+// is a single-document SPA, so location.href tricks would needlessly reload.
+function navigateToPage(page) {
+  setState({ currentPage: page });
+  window.history.replaceState({}, '', `?page=${page}`);
+  if (PAGE_LOADERS[page]) PAGE_LOADERS[page]();
+}
+
+function showQueueToast(actionType, expiresAt) {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  const remaining = (expiresAt || 0) - Math.floor(Date.now() / 1000);
+  const timeStr = formatCountdown(Math.max(0, remaining));
+
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-success';
+  const msg = document.createElement('span');
+  msg.textContent = `✓ ${actionType} queued — cancels in ${timeStr}`;
+  const viewBtn = document.createElement('button');
+  viewBtn.className = 'toast-action';
+  viewBtn.textContent = 'View';
+  viewBtn.addEventListener('click', () => { navigateToPage('executions'); toast.remove(); });
+  toast.appendChild(msg);
+  toast.appendChild(viewBtn);
+  container.appendChild(toast);
+
+  setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
 }
 
 function renderDecision(decision, decisionDict, queue, trust) {
@@ -285,6 +422,8 @@ function renderDecision(decision, decisionDict, queue, trust) {
 
   if (decision === 'GATED' && queue) {
     renderAuthorisation(queue);
+    const proposalForToast = getState().proposal;
+    showQueueToast((proposalForToast && proposalForToast.action_type) || 'Action', queue.expires_at);
   } else {
     document.getElementById('authorisation-slot').innerHTML = '';
     if (countdownHandle) { clearInterval(countdownHandle); countdownHandle = null; }
@@ -324,12 +463,13 @@ function renderAuthorisation(queueItem) {
     const remaining = queueItem.expires_at - Math.floor(Date.now() / 1000);
     const el = document.getElementById('approval-countdown');
     if (!el) { clearInterval(countdownHandle); return; }
-    el.textContent = `Expires in ${formatCountdown(remaining)}`;
+    el.textContent = `Cancels in ${formatCountdown(remaining)}`;
     el.classList.toggle('is-urgent', remaining <= 30);
     if (remaining <= 0) {
       clearInterval(countdownHandle);
-      document.getElementById('approve-btn').disabled = true;
-      document.getElementById('reject-btn').disabled = true;
+      const approveBtn = document.getElementById('approve-btn');
+      const rejectBtn = document.getElementById('reject-btn');
+      [approveBtn, rejectBtn].forEach((b) => { if (b) { b.disabled = true; b.classList.add('is-disabled'); } });
       el.textContent = 'Approval expired';
     }
   };
@@ -386,7 +526,13 @@ async function pollQueueItem(queueId, attempt = 0) {
   setTimeout(() => pollQueueItem(queueId, attempt + 1), 1000);
 }
 
-// ── queue panel ───────────────────────────────────────────────────────────
+// ── approval queue (lives on the Executions page; Task 1 consolidation) ─────
+// Each PENDING item gets inline Approve / Reject controls + a live countdown.
+// Inline onclick can't be used here: app.js is an ES module, so handlers are
+// module-scoped and not reachable from HTML attribute strings — every control
+// is wired with addEventListener instead.
+let queueCountdownHandle = null;
+
 function statusBadgeClass(status) {
   if (status === 'PENDING' || status === 'MANUAL_REVIEW') return 'gated';
   if (status === 'APPROVED' || status === 'EXECUTED') return 'allow';
@@ -396,9 +542,10 @@ function statusBadgeClass(status) {
 
 function renderQueueItems(items) {
   const container = document.getElementById('queue-items');
+  if (queueCountdownHandle) { clearInterval(queueCountdownHandle); queueCountdownHandle = null; }
   container.innerHTML = '';
   if (!items.length) {
-    container.innerHTML = '<p class="proposal-hint">No queue activity yet.</p>';
+    container.innerHTML = '<p class="proposal-hint">No pending approvals.</p>';
     return;
   }
   items.forEach((item) => {
@@ -406,6 +553,9 @@ function renderQueueItems(items) {
     try { actionType = JSON.parse(item.proposal_json).action_type; } catch (e) {}
     const row = document.createElement('div');
     row.className = 'queue-item';
+
+    const head = document.createElement('div');
+    head.className = 'queue-item-head';
 
     const badge = document.createElement('span');
     badge.className = `decision-badge ${statusBadgeClass(item.status)}`;
@@ -415,20 +565,106 @@ function renderQueueItems(items) {
     action.className = 'queue-item-action';
     action.textContent = actionType;
 
-    row.appendChild(badge);
-    row.appendChild(action);
+    head.appendChild(badge);
+    head.appendChild(action);
 
     if (item.status === 'PENDING') {
-      const expiry = document.createElement('span');
-      expiry.className = 'queue-item-expiry';
-      const remaining = item.expires_at - Math.floor(Date.now() / 1000);
-      expiry.textContent = `Expires in ${formatCountdown(Math.max(0, remaining))}`;
-      row.appendChild(expiry);
-      row.addEventListener('click', () => renderAuthorisation(item));
+      const countdown = document.createElement('span');
+      countdown.className = 'queue-item-expiry queue-countdown';
+      countdown.setAttribute('data-expires', String(item.expires_at));
+      head.appendChild(countdown);
+    }
+    row.appendChild(head);
+
+    if (item.status === 'PENDING') {
+      const controls = document.createElement('div');
+      controls.className = 'queue-item-controls';
+
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'btn-primary';
+      approveBtn.textContent = 'Approve & Execute';
+
+      const rejectBtn = document.createElement('button');
+      rejectBtn.className = 'btn-secondary';
+      rejectBtn.textContent = 'Reject';
+
+      const rejectForm = document.createElement('div');
+      rejectForm.className = 'queue-reject-form';
+      rejectForm.hidden = true;
+      const reasonInput = document.createElement('textarea');
+      reasonInput.placeholder = 'Reason for rejection (required)';
+      reasonInput.maxLength = 500;
+      const reasonError = document.createElement('p');
+      reasonError.className = 'banner-message';
+      reasonError.style.color = 'var(--color-oxblood)';
+      reasonError.hidden = true;
+      reasonError.textContent = 'A reason is required to reject.';
+      const confirmReject = document.createElement('button');
+      confirmReject.className = 'btn-secondary';
+      confirmReject.textContent = 'Confirm Rejection';
+      rejectForm.appendChild(reasonInput);
+      rejectForm.appendChild(reasonError);
+      rejectForm.appendChild(confirmReject);
+
+      const statusLine = document.createElement('p');
+      statusLine.className = 'queue-item-status';
+
+      approveBtn.addEventListener('click', async () => {
+        approveBtn.disabled = true; rejectBtn.disabled = true;
+        statusLine.textContent = 'Approved. Checking execution outcome…';
+        const result = await approveQueue(item.id);
+        if (!(result.ok && result.body.success)) {
+          statusLine.textContent = (result.body && result.body.detail) || 'Approval failed.';
+          approveBtn.disabled = false; rejectBtn.disabled = false;
+          return;
+        }
+        await tickExecutions();
+        loadQueue();
+        refreshExecutions();
+      });
+
+      rejectBtn.addEventListener('click', () => { rejectForm.hidden = false; reasonInput.focus(); });
+
+      confirmReject.addEventListener('click', async () => {
+        const reason = reasonInput.value.trim();
+        if (!reason) { reasonError.hidden = false; return; }
+        reasonError.hidden = true;
+        confirmReject.disabled = true;
+        const result = await rejectQueue(item.id, reason);
+        if (result.ok && result.body.success) { loadQueue(); }
+        else { statusLine.textContent = (result.body && result.body.detail) || 'Rejection failed.'; confirmReject.disabled = false; }
+      });
+
+      controls.appendChild(approveBtn);
+      controls.appendChild(rejectBtn);
+      row.appendChild(controls);
+      row.appendChild(rejectForm);
+      row.appendChild(statusLine);
     }
 
     container.appendChild(row);
   });
+
+  // One interval ticks every visible countdown; disables controls on expiry.
+  const tickAll = () => {
+    const spans = document.querySelectorAll('#queue-items .queue-countdown');
+    if (!spans.length) { clearInterval(queueCountdownHandle); queueCountdownHandle = null; return; }
+    spans.forEach((span) => {
+      const expiresAt = Number(span.getAttribute('data-expires'));
+      const remaining = expiresAt - Math.floor(Date.now() / 1000);
+      if (remaining <= 0) {
+        span.textContent = 'Approval expired';
+        span.classList.add('is-expired');
+        const row = span.closest('.queue-item');
+        if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = true; b.classList.add('is-disabled'); });
+      } else {
+        span.textContent = `Cancels in ${formatCountdown(remaining)}`;
+        span.classList.toggle('is-urgent', remaining <= 30);
+      }
+    });
+  };
+  tickAll();
+  queueCountdownHandle = setInterval(tickAll, 1000);
 }
 
 async function loadQueue() {
@@ -464,7 +700,13 @@ async function handleGenerateProposal() {
 
   const agentBody = runResult.body;
   if (agentBody.agent_status === 'AGENT_NEEDS_CLARIFICATION') {
-    setProposalStatus((agentBody.uncertainties || []).join(' '));
+    // Two backend shapes: free-form `uncertainties` (pass 1) or a draft-fit
+    // `detail`/`failures` (drafting actions). Prefer the token list; fall back
+    // to the detail string so the user always gets a readable reason.
+    const tokens = agentBody.uncertainties && agentBody.uncertainties.length
+      ? agentBody.uncertainties
+      : (agentBody.detail ? [agentBody.detail] : []);
+    renderClarification(tokens);
     btn.disabled = false;
     return;
   }
@@ -576,6 +818,14 @@ function initWorkbench() {
   workbenchInitialized = true;
   initComposer();
   applyEstopUI(); // estop-btn listener itself is attached once, from Settings (initSettingsPage)
+
+  // Inbox filter toggle (Task 5) + preview-card close (Task 6) — wired once.
+  document.querySelectorAll('#inbox-filter-toggle .filter-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setInboxFilter(btn.getAttribute('data-filter')));
+  });
+  const previewClose = document.getElementById('preview-close');
+  if (previewClose) previewClose.addEventListener('click', clearEmailSelection);
+
   loadInbox();
   loadQueue();
   refreshGauge('email.reply');
@@ -602,41 +852,92 @@ function outcomeBadgeClass(outcome) {
   return 'config';
 }
 
-function renderAuditRows(entries) {
-  const tbody = document.getElementById('audit-tbody');
-  tbody.innerHTML = '';
-  if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="proposal-hint">No audit entries yet.</td></tr>';
+// Audit events are cached so the filter dropdown can re-render without refetching.
+let auditEventsCache = [];
+
+function auditLabel(entry) { return entry.reason || entry.event_type || '(event)'; }
+
+function populateAuditFilter(events) {
+  const select = document.getElementById('audit-action-filter');
+  const current = select.value;
+  const labels = Array.from(new Set(events.map(auditLabel))).sort();
+  select.innerHTML = '<option value="">All</option>';
+  labels.forEach((l) => select.appendChild(new Option(l, l)));
+  if (labels.includes(current)) select.value = current;
+}
+
+function renderAuditGroups(events) {
+  const container = document.getElementById('audit-groups');
+  container.innerHTML = '';
+  if (!events.length) {
+    container.innerHTML = '<p class="empty-state">No audit entries match.</p>';
     return;
   }
-  entries.forEach((entry) => {
-    const row = document.createElement('tr');
 
-    const ts = document.createElement('td');
-    ts.className = 'timestamp-cell';
-    ts.textContent = new Date(entry.timestamp * 1000).toISOString().slice(0, 19).replace('T', ' ');
-
-    const action = document.createElement('td');
-    action.textContent = entry.reason || entry.event_type;
-
-    const outcomeCell = document.createElement('td');
-    const badge = document.createElement('span');
-    badge.className = `decision-badge ${outcomeBadgeClass(entry.outcome)}`;
-    badge.textContent = entry.outcome || entry.event_type;
-    outcomeCell.appendChild(badge);
-
-    const actor = document.createElement('td');
-    actor.textContent = deriveActor(entry);
-
-    row.appendChild(ts);
-    row.appendChild(action);
-    row.appendChild(outcomeCell);
-    row.appendChild(actor);
-    if (entry.correlation_id) {
-      row.addEventListener('click', () => loadAuditReplay(entry.correlation_id));
-    }
-    tbody.appendChild(row);
+  // Group by calendar date (newest day first; events already arrive newest-first).
+  const grouped = {};
+  events.forEach((evt) => {
+    const date = new Date(evt.timestamp * 1000).toLocaleDateString();
+    (grouped[date] = grouped[date] || []).push(evt);
   });
+
+  Object.keys(grouped)
+    .sort((a, b) => new Date(b) - new Date(a))
+    .forEach((date) => {
+      const group = document.createElement('div');
+      group.className = 'audit-day-group';
+
+      const body = document.createElement('div');
+      body.className = 'audit-day-body';
+
+      const header = document.createElement('button');
+      header.className = 'audit-day-header';
+      const count = grouped[date].length;
+      header.textContent = `${date} ▼ (${count} event${count === 1 ? '' : 's'})`;
+      header.addEventListener('click', () => {
+        const collapsed = !body.hidden;
+        body.hidden = collapsed;
+        header.textContent = `${date} ${collapsed ? '▶' : '▼'} (${count} event${count === 1 ? '' : 's'})`;
+      });
+
+      grouped[date].forEach((evt) => {
+        const row = document.createElement('div');
+        row.className = 'audit-row';
+
+        const time = document.createElement('span');
+        time.className = 'audit-timestamp';
+        time.textContent = new Date(evt.timestamp * 1000).toLocaleTimeString();
+
+        const action = document.createElement('span');
+        action.className = 'audit-action';
+        action.textContent = auditLabel(evt);
+
+        const outcome = document.createElement('span');
+        outcome.className = `decision-badge ${outcomeBadgeClass(evt.outcome)}`;
+        outcome.textContent = evt.outcome || evt.event_type;
+
+        const actor = document.createElement('span');
+        actor.className = 'audit-actor';
+        actor.textContent = deriveActor(evt);
+
+        row.appendChild(time);
+        row.appendChild(action);
+        row.appendChild(outcome);
+        row.appendChild(actor);
+        row.addEventListener('click', () => showAuditReplay(evt));
+        body.appendChild(row);
+      });
+
+      group.appendChild(header);
+      group.appendChild(body);
+      container.appendChild(group);
+    });
+}
+
+function applyAuditFilter() {
+  const value = document.getElementById('audit-action-filter').value;
+  const filtered = value ? auditEventsCache.filter((e) => auditLabel(e) === value) : auditEventsCache;
+  renderAuditGroups(filtered);
 }
 
 // ── audit: chain verification + replay (real backend, previously unwired) ──
@@ -649,15 +950,85 @@ async function handleVerifyChain() {
   el.style.color = valid ? '' : 'var(--color-oxblood)';
 }
 
-async function loadAuditReplay(correlationId) {
-  const panel = document.getElementById('audit-replay-panel');
-  const result = await fetchAuditReplay(correlationId);
-  if (!result.ok) return;
-  panel.hidden = false;
-  document.getElementById('audit-replay-label').textContent =
-    `${result.body.label} (correlation: ${correlationId}, ${result.body.events.length} event(s))`;
-  document.getElementById('audit-replay-events').textContent = JSON.stringify(result.body.events, null, 2);
-  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+// Human-readable replay modal (Task 7c). Shows plain-language fields for the
+// clicked event, then fetches the full correlation replay (the real ARGUS
+// /api/audit/replay feature) for the collapsible JSON detail — so we keep the
+// correlation-grouped replay capability instead of dumping a single raw row.
+function buildReplayField(label, value, mono) {
+  const field = document.createElement('div');
+  field.className = 'replay-field';
+  const l = document.createElement('label');
+  l.textContent = label;
+  const v = document.createElement('span');
+  if (mono) v.className = 'monospace';
+  v.textContent = value;
+  field.appendChild(l);
+  field.appendChild(v);
+  return field;
+}
+
+async function showAuditReplay(event) {
+  let modal = document.getElementById('audit-replay-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'audit-replay-modal';
+    modal.className = 'modal';
+    modal.hidden = true;
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+    document.body.appendChild(modal);
+  }
+
+  const payload = event.payload || {};
+  const outcome = event.outcome || event.event_type || 'UNKNOWN';
+
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+
+  const close = document.createElement('button');
+  close.className = 'modal-close';
+  close.setAttribute('aria-label', 'Close');
+  close.textContent = '×';
+  close.addEventListener('click', () => { modal.hidden = true; });
+
+  const title = document.createElement('h2');
+  title.textContent = 'Event Details — Replay';
+
+  const summary = document.createElement('div');
+  summary.className = 'replay-summary';
+  summary.appendChild(buildReplayField('Event type', event.event_type || 'N/A'));
+  summary.appendChild(buildReplayField('Action type', payload.action_type || event.action_type || 'N/A'));
+  const outcomeField = buildReplayField('Outcome', outcome);
+  outcomeField.querySelector('span').className = `decision-badge ${outcomeBadgeClass(event.outcome)}`;
+  summary.appendChild(outcomeField);
+  summary.appendChild(buildReplayField('Evaluated', new Date(event.timestamp * 1000).toLocaleString()));
+  summary.appendChild(buildReplayField('Reason', event.reason || 'No reason recorded'));
+  summary.appendChild(buildReplayField('Actor', deriveActor(event)));
+  summary.appendChild(buildReplayField('Correlation ID', event.correlation_id || 'N/A', true));
+
+  const details = document.createElement('details');
+  const dsum = document.createElement('summary');
+  dsum.textContent = 'Full correlation replay (JSON)';
+  const pre = document.createElement('pre');
+  pre.textContent = 'Loading…';
+  details.appendChild(dsum);
+  details.appendChild(pre);
+
+  content.appendChild(close);
+  content.appendChild(title);
+  content.appendChild(summary);
+  content.appendChild(details);
+  modal.innerHTML = '';
+  modal.appendChild(content);
+  modal.hidden = false;
+
+  if (event.correlation_id) {
+    const result = await fetchAuditReplay(event.correlation_id);
+    pre.textContent = result.ok
+      ? JSON.stringify(result.body.events, null, 2)
+      : 'Could not load full replay.';
+  } else {
+    pre.textContent = JSON.stringify(event, null, 2);
+  }
 }
 
 function renderAuditSummary(summary) {
@@ -673,12 +1044,17 @@ function initAuditPage() {
   if (auditPageInitialized) return;
   auditPageInitialized = true;
   document.getElementById('audit-verify-btn').addEventListener('click', handleVerifyChain);
+  document.getElementById('audit-action-filter').addEventListener('change', applyAuditFilter);
 }
 
 async function loadAudit() {
   initAuditPage();
   const [auditResult, summaryResult] = await Promise.all([fetchAudit(100), fetchAuditSummary()]);
-  if (auditResult.ok) renderAuditRows(auditResult.body);
+  if (auditResult.ok) {
+    auditEventsCache = auditResult.body;
+    populateAuditFilter(auditEventsCache);
+    applyAuditFilter();
+  }
   if (summaryResult.ok) renderAuditSummary(summaryResult.body);
 }
 
@@ -986,7 +1362,9 @@ function initExecutionsPage() {
   });
 }
 
-PAGE_LOADERS.executions = () => { initExecutionsPage(); refreshExecutions(); };
+// Executions page now hosts both sections (Task 1): the approval queue and the
+// live execution pipeline. Load both whenever the page is opened.
+PAGE_LOADERS.executions = () => { initExecutionsPage(); loadQueue(); refreshExecutions(); };
 
 // ── private contacts (local-only — no backend route exists for this yet) ──
 // ARGUS should never process or decide on emails involving these people.
@@ -1108,8 +1486,28 @@ function initSettingsPage() {
   initProfileSwitcher();
   initEstop();
   initContacts();
+  initExecutionDelay();
   document.getElementById('demo-reset-btn').addEventListener('click', handleDemoReset);
   document.getElementById('gmail-test-btn').addEventListener('click', handleGmailTest);
+}
+
+// Execution delay slider (Task 9a) — frontend-only preference persisted to
+// localStorage. Backend enforcement of the delay lands in Phase 8 Part 5.
+function setExecutionDelayDisplay(minutes) {
+  document.getElementById('execution-delay-display').textContent =
+    `${minutes} minute${String(minutes) === '1' ? '' : 's'}`;
+}
+
+function initExecutionDelay() {
+  const slider = document.getElementById('execution-delay-slider');
+  if (!slider) return;
+  const saved = localStorage.getItem('argus.execution_delay') || '4';
+  slider.value = saved;
+  setExecutionDelayDisplay(saved);
+  slider.addEventListener('input', () => {
+    localStorage.setItem('argus.execution_delay', slider.value);
+    setExecutionDelayDisplay(slider.value);
+  });
 }
 
 async function loadSettings() {
