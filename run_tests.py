@@ -31,6 +31,7 @@ SUITES = [
     ('Phase 8 (1/7) -- Fail-safe Schema',     'tests/test_phase_8_schema.py'),
     ('Phase 8 (2/7) -- Emergency Stop+Epoch',  'tests/test_phase_8_hardstop.py'),
     ('Phase 8 (3/7) -- Atomic Admission',      'tests/test_phase_8_admission.py'),
+    ('Phase 8 (5/7) -- Queue Lifecycle C4+C7', 'tests/test_phase_8_queue_lifecycle.py'),
 ]
 
 SUITE_SHORTCUTS = {
