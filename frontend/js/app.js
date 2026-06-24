@@ -4,7 +4,7 @@
 
 import { getState, setState, setRenderer } from './state.js';
 import {
-  fetchInbox, runAgent, confirmAgent, fetchQueue, fetchQueueItem, approveQueue, rejectQueue,
+  fetchInbox, runAgent, confirmAgent, fetchQueue, approveQueue, rejectQueue, cancelQueue,
   fetchAudit, fetchAuditSummary, fetchTrustHistory, fetchGmailStatus, fetchTrustSnapshot,
   fetchTemplates, saveTemplate, deleteTemplate, matchTemplate, fetchExecutions, tickExecutions,
   verifyAuditChain, fetchAuditReplay, resetDemo, gmailTest,
@@ -262,13 +262,31 @@ function clearBanner() {
 }
 
 // ── workbench: inbox ─────────────────────────────────────────────────────
-// Pagination (Task 4) + All/Unread filter (Task 5). Note: the Gmail backend
-// (argus/gmail_client.py:list_messages) returns id/subject/sender/receivedAt/
-// snippet only — there is NO read/unread flag — so the Unread filter degrades
-// to an honest empty state rather than silently hiding everything.
+// Pagination (Task 4) + All/Unread filter (Task 5). Gmail's metadata API
+// (argus/gmail_client.py:list_messages) never returns a read/unread flag, so
+// "read" is tracked app-side instead: a message counts as read the moment
+// it's clicked (selectEmail), not when it's replied to. Persisted to
+// localStorage, so it survives a refresh but is scoped to this browser.
 const INBOX_ITEMS_PER_PAGE = 20;
+const READ_IDS_KEY = 'argus.read_message_ids';
 let inboxCurrentPage = 1;
 let inboxFilterMode = 'all';
+
+function loadReadIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(READ_IDS_KEY) || '[]'));
+  } catch (e) {
+    return new Set();
+  }
+}
+const readMessageIds = loadReadIds();
+
+function markMessageRead(id) {
+  if (readMessageIds.has(id)) return false;
+  readMessageIds.add(id);
+  localStorage.setItem(READ_IDS_KEY, JSON.stringify([...readMessageIds]));
+  return true;
+}
 
 function getFilteredInbox() {
   const all = getState().inboxEmails || [];
@@ -286,7 +304,7 @@ function renderInbox() {
 
   if (!messages.length) {
     container.innerHTML = inboxFilterMode === 'unread'
-      ? '<p class="empty-state">Unread status can’t be detected for any of your messages right now, so none are shown here.</p>'
+      ? '<p class="empty-state">No unread messages.</p>'
       : '<p class="empty-state">No messages.</p>';
     return;
   }
@@ -299,7 +317,7 @@ function renderInbox() {
 
   pageMessages.forEach((msg) => {
     const item = document.createElement('div');
-    item.className = 'inbox-item';
+    item.className = `inbox-item${msg.isUnread ? ' is-unread' : ''}`;
     if (msg.id === selectedId) item.classList.add('selected');
     item.setAttribute('data-email-id', msg.id);
 
@@ -354,10 +372,14 @@ function setInboxFilter(mode) {
 }
 
 function selectEmail(msg) {
+  // Clicking is what makes it read — no reply required. msg is the same
+  // object reference held in state.inboxEmails (not a copy), so mutating
+  // isUnread here updates state directly; re-rendering then reflects it
+  // immediately, including dropping out of the Unread filter if that's active.
+  const justRead = markMessageRead(msg.id);
+  if (justRead) msg.isUnread = false;
   setState({ selectedEmailId: msg.id });
-  document.querySelectorAll('.inbox-item').forEach((el) => {
-    el.classList.toggle('selected', el.getAttribute('data-email-id') === msg.id);
-  });
+  renderInbox();
   document.getElementById('command-email-context').textContent = `on: ${msg.subject || '(no subject)'}`;
 
   // Preview card (Task 6)
@@ -393,8 +415,14 @@ async function loadInbox() {
     return;
   }
   clearBanner();
-  setState({ inboxEmails: result.body.messages, inboxError: null });
-  renderInboxItems(result.body.messages);
+  // A message is unread unless it's been clicked before (persisted in
+  // readMessageIds) — a brand-new message has never been clicked, so it
+  // starts unread by definition, in both "All" and "Unread".
+  const messages = result.body.messages.map((msg) => ({
+    ...msg, isUnread: !readMessageIds.has(msg.id),
+  }));
+  setState({ inboxEmails: messages, inboxError: null });
+  renderInboxItems(messages);
 }
 
 // ── workbench: command composer + agent run/confirm ─────────────────────
@@ -498,6 +526,107 @@ function showQueueToast(actionType, expiresAt) {
   setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
 }
 
+// ── plain-English trace ──────────────────────────────────────────────────
+// argus/policy_engine.py emits a trace of {step, result, reason, before,
+// after} objects — readable to an engineer, not to the person approving the
+// action. This turns each step into one short sentence instead of dumping
+// the raw JSON, using regex against the existing `reason` text rather than
+// duplicating the backend's numbers (so it can never drift out of sync with
+// what the policy engine actually decided).
+const TRACE_ICON = {
+  PASS: '✓', ALLOW: '✓', OK: '✓',
+  BLOCK: '✗', FAIL: '✗', DB_FAIL: '✗', EXCEPTION: '✗',
+  GATED: '⏸', BUMPED: '⏸',
+  SKIPPED: '–', RELAXED: 'ℹ',
+};
+function traceIconClass(result) {
+  if (['BLOCK', 'FAIL', 'DB_FAIL', 'EXCEPTION'].includes(result)) return 'is-block';
+  if (['GATED', 'BUMPED'].includes(result)) return 'is-gated';
+  if (result === 'SKIPPED') return 'is-skip';
+  return 'is-pass';
+}
+function num(re, str) {
+  const m = re.exec(str || '');
+  return m ? m[1] : null;
+}
+function humanizeTraceStep(item) {
+  if (typeof item === 'string') return item;
+  const { step, result, reason = '' } = item;
+  switch (step) {
+    case 'SYSTEM_HARD_STOP':
+      return 'Emergency stop was not engaged, so the check continued.';
+    case 'PRIME_RULES':
+      return 'Could not check the prime-rule list (database error) — held for review.';
+    case 'PRIME_RULE': {
+      const action = reason.replace(/ is a Prime Rule$/, '');
+      return `“${action}” matches a hard-blocked rule, so it's blocked outright — no exceptions.`;
+    }
+    case 'PRIME_RULE_CHECK':
+      return 'No hard-blocked rule applied to this action.';
+    case 'FREE_ACTION_CHECK':
+      return result === 'ALLOW'
+        ? `This is a low-risk action type, so it ran automatically with no approval needed.`
+        : `This action type always needs a human's approval before it can run.`;
+    case 'POLICY_GATE': {
+      if (result === 'BLOCK') return 'No policy exists for this action type, so it was blocked by default (fail-closed).';
+      const minT = num(/min=([\d.]+)/, reason);
+      const profT = num(/profile_threshold=([\d.]+)/, reason);
+      return `Checked against the active profile — needs at least ${minT} trust, and the current profile requires ${profT}.`;
+    }
+    case 'CONTACT_PERMISSION':
+      if (result === 'RELAXED') {
+        const by = num(/relaxed by ([\d.-]+)/, reason);
+        return `This contact has extra permission on file, which lowered the trust requirement by ${by} points.`;
+      }
+      return 'No special permission on file for this contact — the standard requirement applies.';
+    case 'IMPORTANCE_CHECK': {
+      const m = /importance=(\w+).*?severity (\w+)→(\w+)/.exec(reason);
+      if (!m) return reason;
+      const [, importance, from, to] = m;
+      return result === 'BUMPED'
+        ? `Marked “${importance}” importance, which raised the risk level from ${from} to ${to}.`
+        : `Importance was “${importance}” — risk level stayed at ${to}.`;
+    }
+    case 'TRUST_READ': {
+      const trust = num(/trust=([\d.]+)/, reason);
+      const count = num(/count=(\d+)/, reason);
+      return `Looked up current trust for this action: ${trust} out of 100, built from ${count} past action(s).`;
+    }
+    case 'TRUST_CHECK': {
+      const trust = num(/trust ([\d.]+)/, reason);
+      const threshold = num(/threshold ([\d.]+)/, reason);
+      return result === 'ALLOW'
+        ? `Trust (${trust}) meets the threshold this profile requires (${threshold}) — approved automatically.`
+        : `Trust (${trust}) is below the threshold this profile requires (${threshold}) — needs your approval.`;
+    }
+    case 'DB_CONNECT':
+      return 'Could not reach the database — held for review rather than guessing.';
+    case 'EVALUATE':
+      return 'An unexpected error happened while evaluating this action — held for review.';
+    case 'VALIDATION':
+      return 'The request was missing required information or had an invalid format, so it was rejected before any policy check ran.';
+    default:
+      // Unknown future step — still better than raw JSON: drop the braces/quotes.
+      return reason || `${step}: ${result}`;
+  }
+}
+function renderTrace(trace) {
+  const list = document.getElementById('decision-trace');
+  list.innerHTML = '';
+  (trace || []).forEach((item) => {
+    const li = document.createElement('li');
+    const result = typeof item === 'string' ? 'PASS' : item.result;
+    const icon = document.createElement('span');
+    icon.className = `trace-icon ${traceIconClass(result)}`;
+    icon.textContent = TRACE_ICON[result] || '•';
+    const text = document.createElement('span');
+    text.textContent = humanizeTraceStep(item);
+    li.appendChild(icon);
+    li.appendChild(text);
+    list.appendChild(li);
+  });
+}
+
 function renderDecision(decision, decisionDict, queue, trust) {
   const card = document.getElementById('decision-card');
   card.hidden = false;
@@ -526,7 +655,7 @@ function renderDecision(decision, decisionDict, queue, trust) {
   }
 
   document.getElementById('containment-msg').hidden = decision !== 'BLOCK';
-  document.getElementById('decision-trace').textContent = JSON.stringify(dd.trace || [], null, 2);
+  renderTrace(dd.trace);
 
   if (decision === 'GATED' && queue) {
     renderAuthorisation(queue);
@@ -559,7 +688,7 @@ function renderAuthorisation(queueItem) {
         <h4>Authorisation</h4>
         <span id="approval-countdown" class="auth-countdown"></span>
       </div>
-      <button id="approve-btn" class="btn-primary">Approve &amp; Execute</button>
+      <button id="approve-btn" class="btn-primary">Approve</button>
       <button id="reject-btn" class="btn-secondary">Reject</button>
       <div id="reject-reason-form" hidden>
         <textarea id="reject-reason" placeholder="Reason for rejection (required)" maxlength="500"></textarea>
@@ -591,8 +720,16 @@ function renderAuthorisation(queueItem) {
     btn.disabled = true;
     const result = await approveQueue(queueItem.id);
     if (result.ok && result.body.success) {
-      setProposalStatus('Approved. Checking execution outcome…');
-      pollQueueItem(queueItem.id);
+      // Approved — this card's job is done. Stop the countdown, clear the
+      // policy decision and authorisation widgets (their job was deciding
+      // whether to ask; that's settled now), and keep only the AI Proposal
+      // visible. What happens next (the countdown to send, cancelling, the
+      // actual execution) lives on the Executions page from here on.
+      if (countdownHandle) { clearInterval(countdownHandle); countdownHandle = null; }
+      document.getElementById('authorisation-slot').innerHTML = '';
+      document.getElementById('decision-card').hidden = true;
+      setProposalStatus('Approved — see the Execution Queue page for its countdown and status.');
+      refreshExecutionsPage();
     } else {
       setProposalStatus(result.body.detail || 'Approval failed.');
       btn.disabled = false;
@@ -622,20 +759,6 @@ function renderAuthorisation(queueItem) {
   applyEstopUI();
 }
 
-// Per FRONTEND_HANDOFF.md: after approve, poll GET /api/queue/<id> until status
-// changes away from APPROVED (max 10 polls, 1s interval), since execution is
-// reconciled asynchronously (argus/executor.py), not synchronously on approve.
-async function pollQueueItem(queueId, attempt = 0) {
-  const result = await fetchQueueItem(queueId);
-  if (!result.ok) { setProposalStatus('Could not check execution status.'); loadQueue(); return; }
-  if (result.body.status !== 'APPROVED' || attempt >= 10) {
-    setProposalStatus(`Status: ${result.body.status}`);
-    loadQueue();
-    return;
-  }
-  setTimeout(() => pollQueueItem(queueId, attempt + 1), 1000);
-}
-
 // ── approval queue (lives on the Executions page; Task 1 consolidation) ─────
 // Each PENDING item gets inline Approve / Reject controls + a live countdown.
 // Inline onclick can't be used here: app.js is an ES module, so handlers are
@@ -650,12 +773,12 @@ function statusBadgeClass(status) {
   return 'config';
 }
 
-function renderQueueItems(items) {
+function renderQueueItems(items, scheduledItems = []) {
   const container = document.getElementById('queue-items');
   if (queueCountdownHandle) { clearInterval(queueCountdownHandle); queueCountdownHandle = null; }
   container.innerHTML = '';
-  if (!items.length) {
-    container.innerHTML = '<p class="proposal-hint">No pending approvals.</p>';
+  if (!items.length && !scheduledItems.length) {
+    container.innerHTML = '<p class="proposal-hint">Nothing waiting right now.</p>';
     return;
   }
   items.forEach((item) => {
@@ -732,8 +855,7 @@ function renderQueueItems(items) {
         // the configured delay (see Settings > Execution Delay). The Live
         // Execution section below picks it up once that delay elapses.
         statusLine.textContent = 'Approved — will execute after the delay window.';
-        loadQueue();
-        refreshExecutions();
+        refreshExecutionsPage();
       });
 
       rejectBtn.addEventListener('click', () => { rejectForm.hidden = false; reasonInput.focus(); });
@@ -758,11 +880,68 @@ function renderQueueItems(items) {
     container.appendChild(row);
   });
 
+  // Approved-but-not-yet-promoted items: still nothing has actually happened,
+  // so they belong here (not in Live Execution) — with a real countdown and,
+  // critically, a Cancel button. This is the only point before the delay
+  // elapses where the action can still be reversed.
+  scheduledItems.forEach((ex) => {
+    const row = document.createElement('div');
+    row.className = 'queue-item';
+
+    const head = document.createElement('div');
+    head.className = 'queue-item-head';
+
+    const badge = document.createElement('span');
+    badge.className = 'decision-badge config';
+    badge.textContent = 'SCHEDULED';
+
+    const action = document.createElement('span');
+    action.className = 'queue-item-action';
+    action.textContent = ex.action_type;
+
+    const countdown = document.createElement('span');
+    countdown.className = 'queue-item-expiry queue-schedule-countdown';
+    countdown.setAttribute('data-execute-at', String(ex.execute_at));
+
+    head.appendChild(badge);
+    head.appendChild(action);
+    head.appendChild(countdown);
+    row.appendChild(head);
+
+    const reassure = document.createElement('p');
+    reassure.className = 'queue-item-status';
+    reassure.textContent = 'Approved. Sends automatically when the countdown ends, unless you cancel it first.';
+    row.appendChild(reassure);
+
+    const controls = document.createElement('div');
+    controls.className = 'queue-item-controls';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-secondary';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', async () => {
+      cancelBtn.disabled = true;
+      const result = await cancelQueue(ex.approval_id);
+      if (result.ok && result.body.success) {
+        refreshExecutionsPage();
+      } else {
+        reassure.textContent = (result.body && result.body.detail) || 'Could not cancel — try again.';
+        cancelBtn.disabled = false;
+      }
+    });
+    controls.appendChild(cancelBtn);
+    row.appendChild(controls);
+
+    container.appendChild(row);
+  });
+
   // One interval ticks every visible countdown; disables controls on expiry.
   const tickAll = () => {
-    const spans = document.querySelectorAll('#queue-items .queue-countdown');
-    if (!spans.length) { clearInterval(queueCountdownHandle); queueCountdownHandle = null; return; }
-    spans.forEach((span) => {
+    const pendingSpans = document.querySelectorAll('#queue-items .queue-countdown');
+    const scheduleSpans = document.querySelectorAll('#queue-items .queue-schedule-countdown');
+    if (!pendingSpans.length && !scheduleSpans.length) {
+      clearInterval(queueCountdownHandle); queueCountdownHandle = null; return;
+    }
+    pendingSpans.forEach((span) => {
       const expiresAt = Number(span.getAttribute('data-expires'));
       const remaining = expiresAt - Math.floor(Date.now() / 1000);
       if (remaining <= 0) {
@@ -773,6 +952,18 @@ function renderQueueItems(items) {
       } else {
         span.textContent = `Cancels in ${formatCountdown(remaining)}`;
         span.classList.toggle('is-urgent', remaining <= 30);
+      }
+    });
+    scheduleSpans.forEach((span) => {
+      const executeAt = Number(span.getAttribute('data-execute-at'));
+      const remaining = executeAt - Math.floor(Date.now() / 1000);
+      if (remaining <= 0) {
+        span.textContent = 'Sending now…';
+        const row = span.closest('.queue-item');
+        if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = true; b.classList.add('is-disabled'); });
+      } else {
+        span.textContent = `Sends in ${formatCountdown(remaining)}`;
+        span.classList.toggle('is-urgent', remaining <= 10);
       }
     });
   };
@@ -850,6 +1041,18 @@ async function handleGenerateProposal() {
 
 function initComposer() {
   document.getElementById('generate-proposal-btn').addEventListener('click', handleGenerateProposal);
+
+  // Auto-grow with content instead of letting the user drag-resize it (CSS
+  // already sets resize:none + max-height so this can never grow past the
+  // card or the page). Reset to 'auto' first so it can shrink back down
+  // when text is deleted, not just keep growing.
+  const input = document.getElementById('command-input');
+  const autoGrow = () => {
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+  };
+  input.addEventListener('input', autoGrow);
+  autoGrow();
 }
 
 // ── trust gauge widget (workbench "trust moment") ────────────────────────
@@ -1508,11 +1711,10 @@ const PIPELINE_LABELS = { DRAFT_PENDING: 'Draft', DRAFT_READY: 'Ready', SENDING:
 function renderPipeline(status) {
   const wrap = document.createElement('div');
   wrap.className = 'execution-pipeline';
-  if (status === 'MANUAL_REVIEW' || status === 'FAILED' || status === 'SCHEDULED') {
+  if (status === 'MANUAL_REVIEW' || status === 'FAILED') {
     const step = document.createElement('span');
     step.className = 'pipeline-step';
-    step.textContent = status === 'MANUAL_REVIEW' ? 'Paused for review'
-      : status === 'FAILED' ? 'Failed' : 'Waiting for delay window';
+    step.textContent = status === 'MANUAL_REVIEW' ? 'Paused for review' : 'Failed';
     wrap.appendChild(step);
     return wrap;
   }
@@ -1532,11 +1734,8 @@ function renderPipeline(status) {
   return wrap;
 }
 
-let executionCountdownHandle = null;
-
 function renderExecutions(list) {
   const container = document.getElementById('execution-list');
-  if (executionCountdownHandle) { clearInterval(executionCountdownHandle); executionCountdownHandle = null; }
   container.innerHTML = '';
   if (!list.length) {
     container.innerHTML = '<p class="empty-state">No executions yet.</p>';
@@ -1557,24 +1756,8 @@ function renderExecutions(list) {
     badge.className = `execution-status-badge status-${ex.status.toLowerCase()}`;
     badge.textContent = ex.status.replace('_', ' ');
     head.appendChild(badge);
-
-    if (ex.status === 'SCHEDULED') {
-      const countdown = document.createElement('span');
-      countdown.className = 'execution-countdown';
-      countdown.setAttribute('data-execute-at', String(ex.execute_at));
-      head.appendChild(countdown);
-    } else {
-      head.appendChild(renderPipeline(ex.status));
-    }
+    head.appendChild(renderPipeline(ex.status));
     card.appendChild(head);
-
-    if (ex.status === 'SCHEDULED') {
-      const reassure = document.createElement('p');
-      reassure.className = 'execution-reassurance';
-      reassure.style.color = 'var(--color-secondary-ink)';
-      reassure.textContent = 'Approved. It will send automatically the moment the countdown ends — no further action needed.';
-      card.appendChild(reassure);
-    }
 
     if (ex.status === 'MANUAL_REVIEW') {
       const reassure = document.createElement('p');
@@ -1583,37 +1766,32 @@ function renderExecutions(list) {
       card.appendChild(reassure);
     }
 
-    if (ex.status !== 'SCHEDULED') {
-      const meta = document.createElement('div');
-      meta.className = 'execution-meta';
-      meta.textContent = `attempt ${ex.attempt_count}` + (ex.message_id ? ` · message ${ex.message_id}` : ex.draft_id ? ` · draft ${ex.draft_id}` : '');
-      card.appendChild(meta);
-    }
+    const meta = document.createElement('div');
+    meta.className = 'execution-meta';
+    meta.textContent = `attempt ${ex.attempt_count}` + (ex.message_id ? ` · message ${ex.message_id}` : ex.draft_id ? ` · draft ${ex.draft_id}` : '');
+    card.appendChild(meta);
 
     container.appendChild(card);
   });
-
-  const tickAll = () => {
-    const spans = document.querySelectorAll('#execution-list .execution-countdown');
-    if (!spans.length) { clearInterval(executionCountdownHandle); executionCountdownHandle = null; return; }
-    spans.forEach((span) => {
-      const executeAt = Number(span.getAttribute('data-execute-at'));
-      const remaining = executeAt - Math.floor(Date.now() / 1000);
-      if (remaining <= 0) {
-        span.textContent = 'Sending now…';
-      } else {
-        span.textContent = `Sends in ${formatCountdown(remaining)}`;
-        span.classList.toggle('is-urgent', remaining <= 10);
-      }
-    });
-  };
-  tickAll();
-  executionCountdownHandle = setInterval(tickAll, 1000);
 }
 
-async function refreshExecutions() {
-  const result = await fetchExecutions();
-  if (result.ok) renderExecutions(result.body);
+// Single coordinating refresh for both halves of the Executions page. Fetches
+// the queue and the execution pipeline together and renders them as one
+// picture — SCHEDULED items (approved, counting down, still cancellable)
+// render into the Execution Queue, not Live Execution, since nothing has
+// actually happened to them yet. Calling loadQueue()/renderExecutions()
+// separately would race: whichever finished last would wipe out the other's
+// DOM (both write to overlapping containers), so every call site that needs
+// either uses this instead.
+async function refreshExecutionsPage() {
+  const [queueResult, execResult] = await Promise.all([fetchQueue(), fetchExecutions()]);
+  const pendingItems = queueResult.ok ? queueResult.body : [];
+  const allExecutions = execResult.ok ? execResult.body : [];
+  const scheduled = allExecutions.filter((ex) => ex.status === 'SCHEDULED');
+  const inProgress = allExecutions.filter((ex) => ex.status !== 'SCHEDULED');
+  setState({ queueItems: pendingItems });
+  renderQueueItems(pendingItems, scheduled);
+  renderExecutions(inProgress);
 }
 
 // Auto-advance the pipeline without the user clicking "Check for updates":
@@ -1624,7 +1802,7 @@ async function refreshExecutions() {
 let executionsPollHandle = null;
 function startExecutionsPolling() {
   stopExecutionsPolling();
-  executionsPollHandle = setInterval(() => { refreshExecutions(); }, 4000);
+  executionsPollHandle = setInterval(() => { refreshExecutionsPage(); }, 4000);
 }
 function stopExecutionsPolling() {
   if (executionsPollHandle) { clearInterval(executionsPollHandle); executionsPollHandle = null; }
@@ -1647,7 +1825,7 @@ function initExecutionsPage() {
         status.textContent = (result.body && result.body.detail) || 'Could not check for updates — try again.';
       }
     }
-    refreshExecutions();
+    refreshExecutionsPage();
   });
 }
 
@@ -1657,8 +1835,7 @@ function initExecutionsPage() {
 // stays on this page.
 PAGE_LOADERS.executions = () => {
   initExecutionsPage();
-  loadQueue();
-  refreshExecutions();
+  refreshExecutionsPage();
   startExecutionsPolling();
 };
 

@@ -9,6 +9,7 @@ Token is stored at instance/gmail_token.json (gitignored).
 Credentials (client id/secret) come from .env, never hardcoded.
 """
 import os
+import html
 import base64
 from email.mime.text import MIMEText
 
@@ -291,12 +292,15 @@ def list_messages(max_results=20):
                     metadataHeaders=['Subject', 'From', 'Date']
                 ).execute()
                 headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
+                # Gmail's snippet comes back with literal HTML entities (e.g. "&#39;"
+                # for an apostrophe) baked in by their API, not by anything ARGUS
+                # does — decode once here so the UI never has to show raw entities.
                 messages.append({
                     'id': msg_id,
-                    'subject': headers.get('Subject', '(No subject)'),
+                    'subject': html.unescape(headers.get('Subject', '(No subject)')),
                     'sender': headers.get('From', '(Unknown)'),
                     'receivedAt': headers.get('Date', ''),
-                    'snippet': msg.get('snippet', ''),
+                    'snippet': html.unescape(msg.get('snippet', '')),
                 })
             except Exception:
                 continue
@@ -322,7 +326,7 @@ def get_message_metadata(message_id):
         headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
         return {
             'id': message_id,
-            'subject': headers.get('Subject', '(No subject)'),
+            'subject': html.unescape(headers.get('Subject', '(No subject)')),
             'sender': headers.get('From', '(Unknown)'),
             'receivedAt': headers.get('Date', ''),
         }

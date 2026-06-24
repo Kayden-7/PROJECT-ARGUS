@@ -341,6 +341,14 @@ a { color: var(--color-evergreen); }
 .inbox-item-sender { font-weight: 600; font-size: 14px; }
 .inbox-item-time { font-family: var(--font-mono); font-size: 12px; color: var(--color-secondary-ink); }
 .inbox-item-subject { font-weight: 600; font-size: 14px; margin-top: 2px; }
+/* Unread: a small dot before the sender name. Read: subject/snippet dim down
+   so a glance at the list tells you what's new without needing the filter. */
+.inbox-item.is-unread .inbox-item-sender::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-accent); margin-right: 6px; vertical-align: middle;
+}
+.inbox-item:not(.is-unread) .inbox-item-subject,
+.inbox-item:not(.is-unread) .inbox-item-snippet { font-weight: 400; color: var(--color-secondary-ink); }
 .inbox-item-snippet {
   font-size: 13px;
   color: var(--color-secondary-ink);
@@ -594,6 +602,16 @@ a { color: var(--color-evergreen); }
   opacity: 0.5; cursor: not-allowed;
   background: var(--color-slate-surface); color: var(--color-secondary-ink);
   border-color: var(--color-hairline);
+}
+
+#command-input {
+  resize: none;            /* no drag handle — width/height are JS/CSS controlled, not user-draggable */
+  max-width: 100%;
+  box-sizing: border-box;  /* width:100% must include padding/border, or it can still overflow its card */
+  min-height: 56px;        /* original 2-row baseline, so it doesn't shrink below that when empty */
+  max-height: 240px;       /* grows with content up to here, then scrolls internally */
+  overflow-y: auto;
+  transition: height 0.1s ease;
 }
 
 input, textarea, select {
@@ -855,17 +873,30 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .trace-details { margin-top: var(--spacing-md); }
 .trace-details summary { cursor: pointer; font-size: 13px; color: var(--color-secondary-ink); font-family: var(--font-mono); }
-.trace-pre {
-  font-family: var(--font-mono);
-  font-size: 12px;
+.trace-list {
+  list-style: none;
+  margin: var(--spacing-sm) 0 0;
+  padding: 0;
   background: var(--color-slate-surface);
   border-radius: 4px;
-  padding: var(--spacing-md);
-  margin-top: var(--spacing-sm);
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow: hidden;
 }
+.trace-list li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  padding: 8px var(--spacing-md);
+  border-bottom: 1px solid var(--color-hairline);
+}
+.trace-list li:last-child { border-bottom: none; }
+.trace-list .trace-icon { flex-shrink: 0; font-weight: 700; }
+.trace-list .trace-icon.is-pass { color: var(--color-evergreen); }
+.trace-list .trace-icon.is-block { color: var(--color-oxblood); }
+.trace-list .trace-icon.is-gated { color: var(--color-amber); }
+.trace-list .trace-icon.is-skip { color: var(--color-secondary-ink); }
 
 /* ── profile switcher / emergency stop (Settings page) ───────────────── */
 .profile-switcher { display: flex; gap: var(--spacing-sm); margin-top: var(--spacing-sm); }
@@ -948,15 +979,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .execution-status-badge.status-completed { background: var(--color-evergreen-soft); color: var(--color-evergreen); }
 .execution-status-badge.status-manual_review { background: var(--color-amber-soft); color: var(--color-amber); }
 .execution-status-badge.status-failed { background: var(--color-oxblood-soft); color: var(--color-oxblood); }
-.execution-status-badge.status-scheduled { background: var(--color-proposal-tint); color: var(--color-secondary-ink); }
 .execution-pipeline { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .pipeline-step { font-size: 11px; font-family: var(--font-mono); color: var(--color-hairline); }
 .pipeline-step.is-current { color: var(--color-evergreen); font-weight: 600; }
 .pipeline-step.is-done { color: var(--color-secondary-ink); }
 .pipeline-arrow { color: var(--color-hairline); font-size: 11px; }
 .execution-reassurance { font-size: 13px; color: var(--color-amber); margin-top: var(--spacing-sm); }
-.execution-countdown { font-family: var(--font-mono); font-size: 12px; color: var(--color-secondary-ink); margin-left: auto; }
-.execution-countdown.is-urgent { color: var(--color-oxblood); font-weight: 600; }
 .execution-meta { font-family: var(--font-mono); font-size: 12px; color: var(--color-secondary-ink); margin-top: var(--spacing-sm); }
 
 /* ── private contacts (Settings page) ────────────────────────────────── */

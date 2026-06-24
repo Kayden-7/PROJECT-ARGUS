@@ -75,7 +75,7 @@
 
       <p class="command-label">Your command</p>
       <div class="card" style="margin-bottom: var(--spacing-md);">
-        <textarea id="command-input" placeholder="e.g., 'Reply saying I'll be there.'" maxlength="500" rows="2"></textarea>
+        <textarea id="command-input" placeholder="e.g., 'Reply saying I'll be there.'" rows="2"></textarea>
         <p class="command-context" id="command-email-context"></p>
         <button id="generate-proposal-btn" class="btn-primary" style="margin-top: var(--spacing-md);">Generate proposal</button>
         <div id="proposal-status"></div>
@@ -103,7 +103,7 @@
         <p id="containment-msg" class="containment-msg" hidden>Action blocked before execution. No external effects occurred.</p>
         <details class="trace-details">
           <summary>Why this was allowed / blocked / gated</summary>
-          <pre id="decision-trace" class="trace-pre"></pre>
+          <ul id="decision-trace" class="trace-list"></ul>
         </details>
       </div>
 
