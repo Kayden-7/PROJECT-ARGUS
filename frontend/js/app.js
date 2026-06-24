@@ -466,11 +466,29 @@ const CLARIFY_LABELS = {
   body: 'the message content',
 };
 
+// templates.validate_body()'s exact failure strings (argus/templates.py) — a
+// drafted body that misses the template isn't the same as a missing field,
+// so it gets its own labels instead of falling back to the raw backend string.
+const TEMPLATE_FAILURE_LABELS = {
+  'exceeds max_words': 'the draft came out longer than the template allows',
+  'exceeds max_sentences': 'the draft has more sentences than the template allows',
+  'exceeds max_paragraphs': 'the draft has more paragraphs than the template allows',
+  'contains structural header / metadata': 'the draft accidentally included email-header-like text',
+};
+
+function humanizeClarifyToken(t) {
+  const lower = String(t).toLowerCase().trim();
+  if (CLARIFY_LABELS[lower]) return CLARIFY_LABELS[lower];
+  if (TEMPLATE_FAILURE_LABELS[t]) return TEMPLATE_FAILURE_LABELS[t];
+  if (typeof t === 'string' && t.startsWith('contains avoided phrase:')) {
+    return `the draft used a phrase you've asked it to avoid (${t.split(':').slice(1).join(':').trim()})`;
+  }
+  return String(t);
+}
+
 function renderClarification(tokens) {
   const el = document.getElementById('proposal-status');
-  const parts = (tokens || [])
-    .filter(Boolean)
-    .map((t) => CLARIFY_LABELS[String(t).toLowerCase().trim()] || String(t));
+  const parts = (tokens || []).filter(Boolean).map(humanizeClarifyToken);
   let missing = '';
   if (parts.length === 1) missing = parts[0];
   else if (parts.length > 1) missing = `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
@@ -841,7 +859,18 @@ function renderQueueItems(items, scheduledItems = []) {
     }
     row.appendChild(head);
 
-    if (item.status === 'PENDING') {
+    if (item.status === 'MANUAL_REVIEW') {
+      // Queue-level MANUAL_REVIEW (a proposal awaiting a decision under extra
+      // scrutiny) — distinct from an execution-level MANUAL_REVIEW shown in
+      // Live Execution (something already approved that hit trouble mid-send).
+      // This one is still approve/reject-able, same as PENDING.
+      const explain = document.createElement('p');
+      explain.className = 'queue-item-status';
+      explain.textContent = item.status_reason || 'Flagged for extra scrutiny before a decision — still yours to approve or reject.';
+      row.appendChild(explain);
+    }
+
+    if (item.status === 'PENDING' || item.status === 'MANUAL_REVIEW') {
       const controls = document.createElement('div');
       controls.className = 'queue-item-controls';
 
@@ -1091,12 +1120,16 @@ async function handleGenerateProposal() {
 
   const agentBody = runResult.body;
   if (agentBody.agent_status === 'AGENT_NEEDS_CLARIFICATION') {
-    // Two backend shapes: free-form `uncertainties` (pass 1) or a draft-fit
-    // `detail`/`failures` (drafting actions). Prefer the token list; fall back
-    // to the detail string so the user always gets a readable reason.
+    // Three backend shapes: free-form `uncertainties` (pass 1), a draft-fit
+    // `failures` array (drafting actions — the real specific reasons, e.g.
+    // "exceeds max_paragraphs"), or just `detail` as a last resort. Previously
+    // this only ever read `detail`, so a draft-fit failure always showed the
+    // generic "draft did not fit the template" instead of the real reason.
     const tokens = agentBody.uncertainties && agentBody.uncertainties.length
       ? agentBody.uncertainties
-      : (agentBody.detail ? [agentBody.detail] : []);
+      : (agentBody.failures && agentBody.failures.length
+          ? agentBody.failures
+          : (agentBody.detail ? [agentBody.detail] : []));
     renderClarification(tokens);
     btn.disabled = false;
     return;
