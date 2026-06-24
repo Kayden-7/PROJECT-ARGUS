@@ -94,7 +94,8 @@ def promote_approved():
     now = int(time.time())
     undo = _read_undo_window(db)
     rows = db.execute(
-        "SELECT id, proposal_json, approved_at FROM approval_queue "
+        "SELECT id, proposal_json, approved_at, approval_generation, approval_epoch "
+        "FROM approval_queue "
         "WHERE status='APPROVED' AND approved_at IS NOT NULL AND (approved_at + ?) <= ?",
         (undo, now),
     ).fetchall()
@@ -109,12 +110,18 @@ def promote_approved():
             continue  # calendar / non-Gmail handled elsewhere
         execution_id = str(uuid.uuid4())
         try:
+            # Part 6: carry the approval's generation + epoch onto the execution.
+            # UNIQUE(approval_id, approval_generation) makes this idempotent per
+            # generation, so a SUPERSEDED row from a prior generation never blocks
+            # a freshly re-approved one (which carries the next generation).
             db.execute(
                 "INSERT OR IGNORE INTO pending_executions "
                 "(execution_id, approval_id, action_type, payload_json, status, "
-                " attempt_count, approved_at, execute_after, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 'DRAFT_PENDING', 0, ?, ?, ?, ?)",
+                " attempt_count, approval_generation, approval_epoch, "
+                " approved_at, execute_after, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'DRAFT_PENDING', 0, ?, ?, ?, ?, ?, ?)",
                 (execution_id, r["id"], action_type, r["proposal_json"],
+                 r["approval_generation"], r["approval_epoch"],
                  r["approved_at"], now, now, now),
             )
             db.commit()
@@ -172,12 +179,70 @@ def _recipients_match(gmail_client, draft_id, ent):
     return True
 
 
+def _preflight_hold(db, row):
+    """Part 6 / Control 1 executor preflight (precedence 1: hard stop wins).
+
+    Before ANY Gmail work on a pre-send execution, hold it if the emergency stop
+    is engaged or its approval epoch is stale relative to the live HARD_STOP_EPOCH.
+    Reads the hard-stop snapshot on the executor's OWN connection (correct under
+    test DB overrides). Clears owner_token so the held row stays superseder-eligible
+    for reopen. Honest boundary: SENDING is never retro-held (handled as a crash).
+    """
+    if row["status"] not in ("DRAFT_PENDING", "DRAFT_READY"):
+        return False
+    from argus import kernel
+    snap = kernel._hard_stop_snapshot(conn=db)
+    stale = (not snap.get("ok")) or snap.get("engaged") or (row["approval_epoch"] != snap.get("epoch"))
+    if not stale:
+        return False
+    now = int(time.time())
+    held = db.execute(
+        "UPDATE pending_executions SET status='HELD', owner_token=NULL, updated_at=? "
+        "WHERE execution_id=? AND status IN ('DRAFT_PENDING','DRAFT_READY')",
+        (now, row["execution_id"]),
+    ).rowcount
+    db.commit()
+    if held:
+        try:
+            from argus.audit import safe_record
+            safe_record("HELD_STALE_EPOCH", correlation_id=row["approval_id"],
+                        action_type=row["action_type"], outcome="HELD",
+                        reason="EXECUTOR_BLOCKED_HARD_STOP",
+                        payload={"execution_id": row["execution_id"]})
+        except Exception:
+            pass
+    return held > 0
+
+
 def _advance_draft_action(db, row):
     from argus import gmail_client
     execution_id = row["execution_id"]
     status = row["status"]
     now = int(time.time())
     ent = _entities(row)
+
+    # Precedence 1 — hard stop / stale epoch wins over everything below.
+    if _preflight_hold(db, row):
+        return
+
+    # CONTROL 3 executor preflight: a contact added AFTER approval must still
+    # block a not-yet-sent action. Honest boundary — once status is SENDING the
+    # request may already be dispatched, so that state is never retro-blocked.
+    if status in ("DRAFT_PENDING", "DRAFT_READY"):
+        from argus import private_contacts as _pc
+        if _pc.is_private(ent.get("recipient")):
+            _to_manual_review(db, execution_id,
+                              "EXECUTOR_BLOCKED_PRIVATE_CONTACT: recipient is a protected contact")
+            try:
+                from argus.audit import safe_record
+                safe_record("EXECUTOR_BLOCKED_PRIVATE_CONTACT", correlation_id=row["approval_id"],
+                            action_type=row["action_type"], outcome="BLOCKED",
+                            reason="EXECUTOR_BLOCKED_PRIVATE_CONTACT",
+                            payload={"execution_id": execution_id,
+                                     "contact": _pc._redact(_pc._normalize(ent.get("recipient")))})
+            except Exception:
+                pass
+            return
 
     if status == "DRAFT_PENDING":
         # Orphan-draft guard: if we already attempted once and still have no
@@ -186,13 +251,21 @@ def _advance_draft_action(db, row):
             _to_manual_review(db, execution_id,
                               "Ambiguous draft creation (possible orphan draft) — verify in Gmail.")
             return
-        # Mark the attempt BEFORE calling Gmail, so a crash is detectable.
-        db.execute(
-            "UPDATE pending_executions SET attempt_count=attempt_count+1, updated_at=? "
-            "WHERE execution_id=?",
-            (now, execution_id),
-        )
+        # Part 6 fenced pre-draft claim: take owner_token (and bump attempt_count)
+        # BEFORE touching Gmail. A concurrent reopen/supersede requires
+        # owner_token IS NULL, so claiming here means draft creation can't be raced
+        # and a stale worker can never revive a superseded row. Generation-fenced.
+        gen = row["approval_generation"]
+        token = str(uuid.uuid4())
+        claimed = db.execute(
+            "UPDATE pending_executions SET owner_token=?, attempt_count=attempt_count+1, "
+            "updated_at=? WHERE execution_id=? AND status='DRAFT_PENDING' "
+            "AND owner_token IS NULL AND approval_generation=?",
+            (token, now, execution_id, gen),
+        ).rowcount
         db.commit()
+        if claimed != 1:
+            return  # superseded, held, or already claimed -> not ours to advance
         try:
             history_id = gmail_client.get_history_id()
             draft_id = gmail_client.create_draft(
@@ -207,20 +280,26 @@ def _advance_draft_action(db, row):
             _to_manual_review(db, execution_id,
                               f"Draft creation failed [{cls['class']}:{cls['sub_reason']}]: {str(e)[:160]}")
             return
+        # Persist DRAFT_READY only if the row is STILL ours (same token + generation
+        # + still DRAFT_PENDING) and RELEASE the pre-draft claim (owner_token=NULL)
+        # so a DRAFT_READY row is superseder-eligible again. If a supersede/hold
+        # slipped in, this writes 0 rows — we leave the orphan draft rather than
+        # reviving a dead execution.
         db.execute(
             "UPDATE pending_executions SET draft_id=?, history_id=?, status='DRAFT_READY', "
-            "updated_at=? WHERE execution_id=?",
-            (draft_id, str(history_id), now, execution_id),
+            "owner_token=NULL, updated_at=? WHERE execution_id=? AND status='DRAFT_PENDING' "
+            "AND owner_token=? AND approval_generation=?",
+            (draft_id, str(history_id), now, execution_id, token, gen),
         )
         db.commit()
         return
 
     if status == "DRAFT_READY":
-        # Atomic claim: only the winner (rowcount==1) proceeds to send.
+        # Atomic claim: only the winner (rowcount==1) of an UNCLAIMED row sends.
         token = str(uuid.uuid4())
         affected = db.execute(
             "UPDATE pending_executions SET status='SENDING', owner_token=?, updated_at=? "
-            "WHERE execution_id=? AND status='DRAFT_READY'",
+            "WHERE execution_id=? AND status='DRAFT_READY' AND owner_token IS NULL",
             (token, now, execution_id),
         ).rowcount
         db.commit()
@@ -326,11 +405,15 @@ def _advance_direct_action(db, row):
     now = int(time.time())
     ent = _entities(row)
 
+    # Precedence 1 — hard stop / stale epoch wins before any Gmail call.
+    if _preflight_hold(db, row):
+        return
+
     if status == "DRAFT_PENDING":
         token = str(uuid.uuid4())
         affected = db.execute(
             "UPDATE pending_executions SET status='SENDING', owner_token=?, updated_at=? "
-            "WHERE execution_id=? AND status='DRAFT_PENDING'",
+            "WHERE execution_id=? AND status='DRAFT_PENDING' AND owner_token IS NULL",
             (token, now, execution_id),
         ).rowcount
         db.commit()

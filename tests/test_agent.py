@@ -185,6 +185,10 @@ try:
         _append_only = True
     _chk.rollback(); _chk.close()
     check('audit_events append-only guard restored after reset', _append_only)
+    # The guard-probe row above has a non-chained entry_hash; wipe it so the
+    # shared instance DB is left with a clean, verifiable audit chain for any
+    # suite that runs after this one (run_tests.py shares one DB file).
+    reset_demo()
 
 finally:
     print()

@@ -139,6 +139,74 @@ def create_app():
             return jsonify(result), 500
         return jsonify(result), 200
 
+    # ── Policy profile (Strict / Balanced / Autonomous) ────────────────────────
+    # GET is a public read of the active profile + ceiling; POST is a control-
+    # plane mutation. The policy engine + trust ledger read ACTIVE_PROFILE live,
+    # so a switch takes effect on the next evaluation.
+    @app.route('/api/system/profile', methods=['GET'])
+    def policy_profile_get():
+        from argus import kernel
+        return jsonify({"success": True, **kernel.get_active_profile()}), 200
+
+    @app.route('/api/system/profile', methods=['POST'])
+    def policy_profile_set():
+        from argus import kernel
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        result = kernel.set_active_profile(body.get("profile", ""), updated_by="control",
+                                           reason=body.get("reason"))
+        if not result.get("success"):
+            code = result.get("error_code", "PROFILE_FAILED")
+            http = (400 if code in ("INVALID_PROFILE", "INVALID_REASON", "REJECTION_REASON_TOO_LONG")
+                    else 503 if code in ("BUSY", "AUDIT_WRITE_FAILED") else 500)
+            return jsonify(result), http
+        return jsonify(result), 200
+
+    # ── Phase 8 Part 4: private-contact protection (CONTROL 3) ──────────────────
+    # GET is owner-list read; POST/DELETE are control-plane mutations (owner-only,
+    # never GET, audited atomically inside the module).
+    @app.route('/api/private-contacts', methods=['GET'])
+    def private_contacts_list():
+        from argus import private_contacts as pc
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        return jsonify({"success": True, "contacts": pc.list_contacts()}), 200
+
+    @app.route('/api/private-contacts', methods=['POST'])
+    def private_contacts_add():
+        from argus import private_contacts as pc
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        result = pc.add_contact(body.get("email", ""), display_label=body.get("display_label"),
+                                updated_by="control", reason=body.get("reason"))
+        if not result.get("success"):
+            code = result.get("error_code", "MUTATION_FAILED")
+            http = (400 if code in ("INVALID_EMAIL", "INVALID_REASON", "REJECTION_REASON_TOO_LONG")
+                    else 503 if code == "AUDIT_WRITE_FAILED" else 500)
+            return jsonify(result), http
+        return jsonify(result), 200
+
+    @app.route('/api/private-contacts', methods=['DELETE'])
+    def private_contacts_remove():
+        from argus import private_contacts as pc
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        result = pc.remove_contact(body.get("email", ""), updated_by="control",
+                                   reason=body.get("reason"))
+        if not result.get("success"):
+            code = result.get("error_code", "MUTATION_FAILED")
+            http = (400 if code in ("INVALID_EMAIL", "INVALID_REASON", "REJECTION_REASON_TOO_LONG")
+                    else 503 if code == "AUDIT_WRITE_FAILED" else 500)
+            return jsonify(result), http
+        return jsonify(result), 200
+
     # ── Phase 2→3 connector ───────────────────────────────────────────────────
 
     def _audit_decision(correlation, body, decision):
@@ -337,6 +405,27 @@ def create_app():
         result = cancel(item_id)
         if not result.get("success"):
             return _queue_error(result)
+        return jsonify({"success": True, "id": result["id"], "status": result["status"]}), 200
+
+    @app.route('/api/queue/<item_id>/reopen', methods=['POST'])
+    def queue_reopen(item_id):
+        # R-REOPEN (Part 6): owner-only, reason required. Recovers HELD /
+        # MANUAL_REVIEW_TIMEOUT / TRANSITION_LOCKED items back to PENDING.
+        from argus.queue import reopen
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        result = reopen(item_id, body.get("reason", ""), actor="control")
+        if not result.get("success"):
+            code = result.get("error_code", "DB_ERROR")
+            http = (404 if code == "ITEM_NOT_FOUND"
+                    else 400 if code in ("REASON_REQUIRED", "REJECTION_REASON_TOO_LONG",
+                                         "INVALID_REOPEN_STATE")
+                    else 409 if code in ("EXECUTION_OUTCOME_UNRESOLVED", "ALREADY_EXECUTED",
+                                         "INVALID_STATE_TRANSITION")
+                    else 503 if code == "AUDIT_WRITE_FAILED" else 500)
+            return jsonify(result), http
         return jsonify({"success": True, "id": result["id"], "status": result["status"]}), 200
 
     # ── Phase 7: Audit trail ──────────────────────────────────────────────────

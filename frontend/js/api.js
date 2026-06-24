@@ -246,6 +246,20 @@ export async function setEmergencyStop(engaged) {
   });
 }
 
+// GET /api/system/profile -> { success, profile, ceiling }
+export async function fetchActiveProfile() {
+  return request('/api/system/profile', { method: 'GET' });
+}
+
+// POST /api/system/profile { profile } -> { success, profile, ceiling, transitioned }
+export async function setActiveProfile(profile) {
+  return request('/api/system/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile }),
+  });
+}
+
 // POST <PRIVATE_CONTACTS_ENDPOINT> { contacts: string[] }. No-op until the constant is set.
 export async function savePrivateContacts(contacts) {
   if (!PRIVATE_CONTACTS_ENDPOINT) return { ok: false, status: 0, body: { error_code: 'NOT_WIRED' } };

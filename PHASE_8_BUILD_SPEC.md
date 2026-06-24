@@ -153,6 +153,16 @@ In ONE transaction:
 
 ## ATOMIC APPROVAL TRANSACTION
 
+> **BUILD DEVIATION (Part 6, locked after GPT-5.5 stress test + live-code cross-check):**
+> Execution creation is NOT relocated into `approve()`. The live Phase 5 model keeps
+> creation deferred to `executor.promote_approved()` AFTER the undo window (no execution
+> exists during undo). A stress test showed relocating creation into approve() opens a
+> cancel-vs-worker double-send race; keeping creation deferred dissolves it. So `approve()`
+> instead atomically bumps `approval_generation` + stamps `approval_epoch` (and refuses
+> under hard stop); `promote_approved()` carries those onto the execution. The
+> at-most-one-send invariant is preserved. See DEFERRED.md (Fence B) for the one piece
+> not yet built.
+
 `BEGIN IMMEDIATE`:
 1. assert `SYSTEM_HARD_STOP=0`; capture `HARD_STOP_EPOCH`
 2. CAS `approval_queue: PENDING → APPROVED` (WHERE status='PENDING' AND version=?)

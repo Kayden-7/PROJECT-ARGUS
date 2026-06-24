@@ -10,6 +10,7 @@ import {
   verifyAuditChain, fetchAuditReplay, resetDemo, gmailTest,
   setEmergencyStop, savePrivateContacts,
   fetchExecutionDelay, setExecutionDelay,
+  fetchActiveProfile, setActiveProfile,
 } from './api.js';
 
 // Mirrors config.py ALL_ACTIONS — kept in sync manually, same approach used
@@ -70,24 +71,44 @@ function initEstop() {
   applyEstopUI();
 }
 
-// ── profile switcher (visual/local-only — POST /api/profile does not exist) ─
-function applyProfileUI() {
-  const profile = localStorage.getItem('argus.profile') || 'Balanced';
+// ── profile switcher (server-authoritative: POST /api/system/profile) ───────
+// ACTIVE_PROFILE drives the policy threshold AND the trust ceiling shown on the
+// workbench, so the switch must hit the backend — localStorage alone left the
+// two out of sync (workbench always read the server's Balanced ceiling).
+function applyProfileUI(profile) {
+  const active = profile || 'Balanced';
   document.querySelectorAll('.profile-opt').forEach((b) => {
-    b.classList.toggle('active', b.getAttribute('data-profile') === profile);
+    b.classList.toggle('active', b.getAttribute('data-profile') === active);
   });
 }
 
-function initProfileSwitcher() {
+// Reflect the real backend profile (re-run on every settings visit).
+async function syncProfileUI() {
+  const cur = await fetchActiveProfile();
+  applyProfileUI(cur.ok && cur.body.success ? cur.body.profile : 'Balanced');
+}
+
+async function initProfileSwitcher() {
   const switcher = document.getElementById('profile-switcher');
   if (!switcher) return;
-  switcher.addEventListener('click', (e) => {
+
+  await syncProfileUI();
+
+  switcher.addEventListener('click', async (e) => {
     const btn = e.target.closest('.profile-opt');
     if (!btn) return;
-    localStorage.setItem('argus.profile', btn.getAttribute('data-profile'));
-    applyProfileUI();
+    const profile = btn.getAttribute('data-profile');
+    const prev = document.querySelector('.profile-opt.active')?.getAttribute('data-profile');
+    applyProfileUI(profile);                       // optimistic
+    const res = await setActiveProfile(profile);
+    if (!res.ok || !res.body.success) {
+      applyProfileUI(prev);                        // revert on failure
+      return;
+    }
+    // Keep the workbench gauge/ceiling in sync with the new profile.
+    const proposal = getState().proposal;
+    if (proposal && proposal.action_type) refreshTrustForAction(proposal.action_type);
   });
-  applyProfileUI();
 }
 
 function currentPageFromUrl() {
@@ -1825,7 +1846,7 @@ async function initExecutionDelay() {
 
 async function loadSettings() {
   initSettingsPage();
-  applyProfileUI();
+  syncProfileUI();
   applyEstopUI();
   renderContacts();
   await refreshGmailStatus();

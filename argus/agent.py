@@ -234,6 +234,22 @@ def _apply_grounding(p1, meta):
     return p1
 
 
+def _private_contact_blocked(hit):
+    """CONTROL 3 hit: audit a REDACTED reference and return the agent status. No
+    proposal is stored and no queue item is created. The audit is best-effort —
+    the request is already denied, so a failed audit cannot let it proceed."""
+    try:
+        from argus.audit import safe_record
+        safe_record("PRIVATE_CONTACT_PROTECTED", outcome="BLOCKED",
+                    reason="PRIVATE_CONTACT_PROTECTED",
+                    payload={"field": hit.get("field"), "contact": hit.get("redacted")})
+    except Exception:
+        pass
+    return {"agent_status": "AGENT_PRIVATE_CONTACT_PROTECTED",
+            "detail": "This contact is protected — ARGUS will not act on or message them.",
+            **_versions()}
+
+
 def run_agent(command, selected_email_id=None):
     """
     NL command -> canonical proposal (NOT executed). Returns an agent_status and,
@@ -243,6 +259,7 @@ def run_agent(command, selected_email_id=None):
     If selected_email_id is provided, verifies it exists in Gmail and includes
     grounding confirmation in response.
     """
+    from argus import private_contacts as _pc
     if not command or not isinstance(command, str) or not command.strip():
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "empty command", **_versions()}
     if len(command) > AGENT_MAX_COMMAND_LEN:
@@ -258,6 +275,11 @@ def run_agent(command, selected_email_id=None):
         except Exception as e:
             return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": str(e)[:200],
                     "grounding_confirmed": False, **_versions()}
+        # CONTROL 3: if the SELECTED email is from a private contact, never even
+        # interpret it — block before any GPT call, proposal, or queue item.
+        _src_hit = _pc.check_targets(None, {}, source_sender=selected_email_metadata.get("sender"))
+        if _src_hit:
+            return _private_contact_blocked(_src_hit)
 
     # Pass 1 — extraction
     try:
@@ -287,6 +309,13 @@ def run_agent(command, selected_email_id=None):
 
     # Code re-derives externality before anything downstream sees the action.
     action_type = rederive_action(action_type, entities)
+
+    # CONTROL 3: block before the drafting GPT call / admission if the OUTGOING
+    # recipient (or the source email's sender, for forwards) is a private contact.
+    _tgt_hit = _pc.check_targets(action_type, entities,
+                                 source_sender=(selected_email_metadata or {}).get("sender"))
+    if _tgt_hit:
+        return _private_contact_blocked(_tgt_hit)
 
     # Two-pass body drafting for email actions, gated by the body validator.
     if action_type in DRAFTING_ACTIONS:

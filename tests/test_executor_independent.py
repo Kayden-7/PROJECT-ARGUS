@@ -50,7 +50,10 @@ def init_executor_schema(db_path):
         """
         CREATE TABLE system_state (
             key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
+            value TEXT NOT NULL,
+            updated_at INTEGER,
+            updated_by TEXT,
+            reason TEXT
         );
 
         CREATE TABLE approval_queue (
@@ -63,7 +66,9 @@ def init_executor_schema(db_path):
             approved_at INTEGER,
             updated_at INTEGER NOT NULL,
             status_reason TEXT,
-            execution_id TEXT
+            execution_id TEXT,
+            approval_generation INTEGER NOT NULL DEFAULT 0,
+            approval_epoch INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE pending_executions (
@@ -72,7 +77,7 @@ def init_executor_schema(db_path):
             action_type   TEXT NOT NULL,
             payload_json  TEXT NOT NULL,
             status        TEXT NOT NULL DEFAULT 'DRAFT_PENDING'
-                          CHECK(status IN ('DRAFT_PENDING','DRAFT_READY','SENDING','COMPLETED','MANUAL_REVIEW','FAILED')),
+                          CHECK(status IN ('DRAFT_PENDING','DRAFT_READY','SENDING','COMPLETED','MANUAL_REVIEW','FAILED','HELD','SUPERSEDED')),
             draft_id      TEXT,
             message_id    TEXT,
             history_id    TEXT,
@@ -83,7 +88,9 @@ def init_executor_schema(db_path):
             approved_at   INTEGER NOT NULL,
             execute_after INTEGER NOT NULL,
             created_at    INTEGER NOT NULL DEFAULT 0,
-            updated_at    INTEGER NOT NULL DEFAULT 0
+            updated_at    INTEGER NOT NULL DEFAULT 0,
+            approval_generation INTEGER NOT NULL DEFAULT 0,
+            approval_epoch INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE trust_current (
@@ -117,9 +124,13 @@ def init_executor_schema(db_path):
         );
         """
     )
-    conn.execute("INSERT INTO system_state VALUES ('UNDO_WINDOW_SECONDS', '60')")
-    conn.execute("INSERT INTO system_state VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
-    conn.execute("INSERT INTO system_state VALUES ('ACTIVE_PROFILE', 'Balanced')")
+    conn.execute("INSERT INTO system_state (key, value) VALUES ('UNDO_WINDOW_SECONDS', '60')")
+    # Hard-stop control rows (Part 6 executor preflight reads these): not engaged,
+    # epoch 0 — matches a freshly initialised real DB.
+    conn.execute("INSERT INTO system_state (key, value) VALUES ('SYSTEM_HARD_STOP', '0')")
+    conn.execute("INSERT INTO system_state (key, value) VALUES ('HARD_STOP_EPOCH', '0')")
+    conn.execute("INSERT INTO system_state (key, value) VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
+    conn.execute("INSERT INTO system_state (key, value) VALUES ('ACTIVE_PROFILE', 'Balanced')")
     conn.execute(
         "INSERT INTO trust_current (action_type, trust_current, damping_remaining, damping_streak) VALUES (?, 40.0, 0, 0)",
         ("email.send.external",),

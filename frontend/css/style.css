@@ -511,7 +511,29 @@ a { color: var(--color-evergreen); }
 .tagline { color: var(--color-secondary-ink); font-size: 13px; margin-bottom: var(--spacing-lg); }
 .page-description { color: var(--color-secondary-ink); font-size: 14px; line-height: 1.6; margin-bottom: var(--spacing-lg); max-width: 70ch; }
 .delay-row { display: flex; align-items: center; gap: var(--spacing-md); margin-top: var(--spacing-sm); }
-.delay-row input[type="range"] { width: 200px; accent-color: var(--color-evergreen); }
+/* Grey track + green thumb, no fill — so there's nothing to misalign: the thumb
+   sits flush left at min and flush right at max. */
+.delay-row input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 200px; height: 8px; border-radius: 5px; cursor: pointer;
+  background: var(--color-hairline); outline: none;
+  /* Reset the global `input` rule (line ~580): its 12px padding + 1px border
+     would inset the thumb's travel and leave a grey gap at each end. */
+  padding: 0; border: none; margin: 0;
+}
+.delay-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%; border: none;
+  background: var(--color-evergreen); cursor: pointer;
+}
+.delay-row input[type="range"]::-moz-range-track {
+  height: 8px; border-radius: 5px; background: var(--color-hairline);
+}
+.delay-row input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; border: none;
+  background: var(--color-evergreen); cursor: pointer;
+}
+.delay-row input[type="range"]:focus-visible { outline: 2px solid var(--color-evergreen); outline-offset: 2px; }
 #execution-delay-display { font-weight: 600; font-size: 14px; min-width: 90px; }
 /* (.clarify-note styling lives further down — the redesign's version with a
    .clarify-mark dot — so no duplicate rule is defined here.) */
