@@ -8,9 +8,11 @@ import {
   fetchAudit, fetchAuditSummary, fetchTrustHistory, fetchGmailStatus, fetchTrustSnapshot,
   fetchTemplates, saveTemplate, deleteTemplate, matchTemplate, fetchExecutions, tickExecutions,
   verifyAuditChain, fetchAuditReplay, resetDemo, gmailTest,
-  setEmergencyStop, savePrivateContacts,
+  fetchEmergencyStopStatus, setEmergencyStop,
   fetchExecutionDelay, setExecutionDelay,
   fetchActiveProfile, setActiveProfile,
+  fetchPrivateContacts, addPrivateContact, removePrivateContact,
+  reopenQueue,
 } from './api.js';
 
 // Mirrors config.py ALL_ACTIONS — kept in sync manually, same approach used
@@ -29,12 +31,16 @@ let countdownHandle = null;
 const PAGES = ['login', 'workbench', 'audit', 'trust', 'templates', 'executions', 'settings'];
 
 // ── emergency stop ──────────────────────────────────────────────────────────
-// Local-first today: localStorage is the immediate UI source of truth, and the
-// toggle also fires setEmergencyStop() — a no-op (NOT_WIRED) until ESTOP_ENDPOINT
-// is set in api.js. Phase 8: fill that constant to go server-authoritative; the
-// only further change is to stop trusting localStorage as the canonical state.
+// Server-authoritative: the real flag lives in system_state (SYSTEM_HARD_STOP)
+// and the executor's preflight actually checks it before any Gmail work, so the
+// frontend has to reflect the real value, not a local guess. estopEngaged is a
+// cache of the last known server state — synced via syncEstopUI(), read
+// synchronously everywhere else via isEstopActive() so existing call sites
+// (which just want "is it on right now") don't need to become async.
+let estopEngaged = false;
+
 function isEstopActive() {
-  return localStorage.getItem('argus.estop') === '1';
+  return estopEngaged;
 }
 
 function applyEstopUI() {
@@ -58,17 +64,33 @@ function applyEstopUI() {
   }
 }
 
+// Pulls the real state from the server and re-renders. Call this whenever the
+// page loads or after any action that might have changed it elsewhere (another
+// tab, another operator) — never just trust the last-known cache for long.
+async function syncEstopUI() {
+  const result = await fetchEmergencyStopStatus();
+  estopEngaged = result.ok && result.body.success ? !!result.body.engaged : estopEngaged;
+  applyEstopUI();
+}
+
 function initEstop() {
   const btn = document.getElementById('estop-btn');
+  const status = document.getElementById('estop-status');
   if (btn) {
-    btn.addEventListener('click', () => {
-      localStorage.setItem('argus.estop', isEstopActive() ? '0' : '1');
-      applyEstopUI();
-      // Phase 8: flips to server-authoritative once ESTOP_ENDPOINT is set (no-op until then).
-      setEmergencyStop(isEstopActive());
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const result = await setEmergencyStop(!estopEngaged);
+      btn.disabled = false;
+      if (result.ok && result.body.success) {
+        estopEngaged = result.body.engaged;
+        applyEstopUI();
+      } else if (status) {
+        status.classList.add('alert');
+        status.textContent = (result.body && result.body.detail) || 'Could not change emergency stop — try again.';
+      }
     });
   }
-  applyEstopUI();
+  syncEstopUI();
 }
 
 // ── profile switcher (server-authoritative: POST /api/system/profile) ───────
@@ -766,8 +788,18 @@ function renderAuthorisation(queueItem) {
 // is wired with addEventListener instead.
 let queueCountdownHandle = null;
 
+// Why each stuck state happened, in plain English — item.status_reason often
+// already has specifics (e.g. the exact auto-lock count), shown as a detail
+// line underneath this framing rather than replacing it.
+const STUCK_STATE_COPY = {
+  HELD: "Held before reaching Gmail — almost always because Emergency Stop was engaged, or the system's hard-stop epoch changed while this was in flight. Nothing was sent. Reopen to send it back for a fresh approval.",
+  MANUAL_REVIEW_TIMEOUT: "This sat in manual review for too long without a decision (10 minutes) and timed out. Reopen to put it back in front of you for approval or rejection.",
+  TRANSITION_LOCKED: "Locked after several invalid attempts to change its status in a short window — a safety measure against rapid retries, not anything you did wrong with this specific click. Reopen to unlock it.",
+};
+const REOPENABLE_STATES = ['HELD', 'MANUAL_REVIEW_TIMEOUT', 'TRANSITION_LOCKED'];
+
 function statusBadgeClass(status) {
-  if (status === 'PENDING' || status === 'MANUAL_REVIEW') return 'gated';
+  if (status === 'PENDING' || status === 'MANUAL_REVIEW' || REOPENABLE_STATES.includes(status)) return 'gated';
   if (status === 'APPROVED' || status === 'EXECUTED') return 'allow';
   if (status === 'REJECTED' || status === 'EXPIRED' || status === 'CANCELLED') return 'block';
   return 'config';
@@ -874,6 +906,61 @@ function renderQueueItems(items, scheduledItems = []) {
       controls.appendChild(rejectBtn);
       row.appendChild(controls);
       row.appendChild(rejectForm);
+      row.appendChild(statusLine);
+    } else if (REOPENABLE_STATES.includes(item.status)) {
+      // HELD / MANUAL_REVIEW_TIMEOUT / TRANSITION_LOCKED: the backend's only
+      // way forward is reopen() — there is no approve/reject from here, and a
+      // reason is mandatory (the backend rejects an empty one outright).
+      const explain = document.createElement('p');
+      explain.className = 'queue-item-status';
+      explain.textContent = STUCK_STATE_COPY[item.status] || 'This item needs to be reopened before any further action.';
+      row.appendChild(explain);
+
+      // TRANSITION_LOCKED's specific reason lands in transition_lock_reason,
+      // not status_reason (see argus/queue.py:_handle_invalid) — check both.
+      const detailText = item.status_reason || item.transition_lock_reason;
+      if (detailText) {
+        const detail = document.createElement('p');
+        detail.className = 'proposal-hint';
+        detail.textContent = detailText;
+        row.appendChild(detail);
+      }
+
+      const reopenForm = document.createElement('div');
+      reopenForm.className = 'queue-reject-form';
+      const reasonInput = document.createElement('textarea');
+      reasonInput.placeholder = 'Reason for reopening (required)';
+      reasonInput.maxLength = 500;
+      const reasonError = document.createElement('p');
+      reasonError.className = 'banner-message';
+      reasonError.style.color = 'var(--color-oxblood)';
+      reasonError.hidden = true;
+      reasonError.textContent = 'A reason is required to reopen.';
+      const reopenBtn = document.createElement('button');
+      reopenBtn.className = 'btn-primary';
+      reopenBtn.textContent = 'Reopen';
+      const statusLine = document.createElement('p');
+      statusLine.className = 'queue-item-status';
+
+      reopenBtn.addEventListener('click', async () => {
+        const reason = reasonInput.value.trim();
+        if (!reason) { reasonError.hidden = false; return; }
+        reasonError.hidden = true;
+        reopenBtn.disabled = true;
+        const result = await reopenQueue(item.id, reason);
+        if (result.ok && result.body.success) {
+          statusLine.textContent = 'Reopened — back to PENDING for a fresh decision.';
+          refreshExecutionsPage();
+        } else {
+          statusLine.textContent = (result.body && result.body.detail) || 'Could not reopen — try again.';
+          reopenBtn.disabled = false;
+        }
+      });
+
+      reopenForm.appendChild(reasonInput);
+      reopenForm.appendChild(reasonError);
+      reopenForm.appendChild(reopenBtn);
+      row.appendChild(reopenForm);
       row.appendChild(statusLine);
     }
 
@@ -1016,6 +1103,13 @@ async function handleGenerateProposal() {
   }
   if (agentBody.agent_status === 'AGENT_UNAVAILABLE') {
     setProposalStatus('Agent is unavailable — the server is missing its OPENAI_API_KEY configuration. This is a server setup issue, not a problem with your command.');
+    btn.disabled = false;
+    return;
+  }
+  if (agentBody.agent_status === 'AGENT_PRIVATE_CONTACT_PROTECTED') {
+    // Phase 8 Part 4 — this contact is on the Private Contacts list (Settings).
+    // The command WAS understood; it's refused on purpose, not a parsing failure.
+    setProposalStatus(agentBody.detail || 'This contact is protected — ARGUS will not act on or message them.');
     btn.disabled = false;
     return;
   }
@@ -1245,7 +1339,7 @@ function initWorkbench() {
   if (workbenchInitialized) return;
   workbenchInitialized = true;
   initComposer();
-  applyEstopUI(); // estop-btn listener itself is attached once, from Settings (initSettingsPage)
+  syncEstopUI(); // estop-btn listener itself is attached once, from Settings (initSettingsPage)
 
   // Inbox filter toggle (Task 5) + preview-card close (Task 6) — wired once.
   document.querySelectorAll('#inbox-filter-toggle .filter-btn').forEach((btn) => {
@@ -1266,6 +1360,9 @@ function initWorkbench() {
 // already human-readable per the verified API), not a fabricated sentence.
 function deriveActor(entry) {
   if (entry.event_type === 'QUEUE_TRANSITIONED' && (entry.outcome === 'APPROVED' || entry.outcome === 'REJECTED')) return 'You';
+  if (['QUEUE_REOPENED', 'SYSTEM_HARD_STOP_ENABLED', 'SYSTEM_HARD_STOP_DISABLED',
+       'POLICY_PROFILE_CHANGED', 'PRIVATE_CONTACT_ADDED', 'PRIVATE_CONTACT_REMOVED',
+       'DEMO_RESET_COMPLETED'].includes(entry.event_type)) return 'You';
   if (entry.event_type === 'DECISION_EVALUATED') return 'Policy engine';
   if (entry.event_type && entry.event_type.startsWith('EXECUTION_')) return 'Agent';
   if (entry.event_type === 'INBOX_READ' || entry.event_type === 'AGENT_PROPOSAL') return 'Agent';
@@ -1283,7 +1380,58 @@ function outcomeBadgeClass(outcome) {
 // Audit events are cached so the filter dropdown can re-render without refetching.
 let auditEventsCache = [];
 
-function auditLabel(entry) { return entry.reason || entry.event_type || '(event)'; }
+// `reason` is sometimes a real human-written note (a rejection reason, an
+// emergency-stop justification someone typed) and sometimes one of the
+// backend's internal failure_reason_code constants (SYSTEM_HARD_STOP,
+// SAFETY_DOWNGRADE_UNRECOGNIZED_DOMAIN, etc.) — those are codes, not
+// sentences, so translate the known ones instead of showing them raw.
+const REASON_CODE_LABELS = {
+  SYSTEM_HARD_STOP: 'Emergency stop was engaged',
+  TRUST_BELOW_THRESHOLD: 'Trust was below the required threshold',
+  INTERNAL_ERROR: 'An internal error occurred',
+  MISSING_BODY: 'The request body was missing',
+  QUEUE_FAILURE: 'Could not write to the approval queue',
+  PRIVATE_CONTACT_PROTECTED: 'Recipient is a protected contact',
+  EXECUTOR_BLOCKED_HARD_STOP: 'Execution held — emergency stop engaged',
+  EXECUTOR_BLOCKED_PRIVATE_CONTACT: 'Execution blocked — protected contact',
+  INVALID_TRANSITION_RATE_LIMITED: 'Too many invalid status-change attempts — auto-locked',
+  SAFETY_DOWNGRADE_DELETE: 'Downgraded to approval — deletions are never auto-allowed',
+  SAFETY_DOWNGRADE_MALFORMED_RECIPIENT: 'Downgraded to approval — recipient address looked malformed',
+  SAFETY_DOWNGRADE_EXTERNAL_FORWARD: 'Downgraded to approval — forwarding outside the organisation',
+  SAFETY_DOWNGRADE_UNRECOGNIZED_DOMAIN: 'Downgraded to approval — recipient domain is not pre-trusted',
+  SAFETY_DOWNGRADE_BCC: 'Downgraded to approval — a Bcc recipient was present',
+  SAFETY_DOWNGRADE_NEW_RECIPIENTS: 'Downgraded to approval — new recipients added',
+  UNKNOWN_ACTION_TYPE: 'Unrecognised action type',
+  MISSING_REQUIRED_FIELD: 'A required field was missing',
+  EMPTY_REQUIRED_FIELD: 'A required field was empty',
+  INVALID_FIELD_TYPE: 'A field had the wrong type',
+  INVALID_ACTION_EXPIRY: 'Invalid expiry value',
+  MISSING_ACTION_TYPE: 'No action type was given',
+};
+
+// event_type fallback when there's no reason at all (e.g. a clean
+// PRIVATE_CONTACT_ADDED with no operator note) — same plain-English standard.
+const EVENT_TYPE_LABELS = {
+  PRIVATE_CONTACT_ADDED: 'Private contact added',
+  PRIVATE_CONTACT_REMOVED: 'Private contact removed',
+  PRIVATE_CONTACT_PROTECTED: 'Blocked — protected contact',
+  SYSTEM_HARD_STOP_ENABLED: 'Emergency stop engaged',
+  SYSTEM_HARD_STOP_DISABLED: 'Emergency stop disengaged',
+  QUEUE_TRANSITIONED: 'Queue status changed',
+  QUEUE_TRANSITION_LOCKED: 'Queue item auto-locked',
+  QUEUE_REOPENED: 'Queue item reopened',
+  MANUAL_REVIEW_TIMEOUT: 'Manual review timed out',
+  HELD_STALE_EPOCH: 'Execution held (emergency stop)',
+  POLICY_PROFILE_CHANGED: 'Policy profile changed',
+  DEMO_RESET_COMPLETED: 'Demo data reset',
+};
+
+function auditLabel(entry) {
+  if (entry.reason && REASON_CODE_LABELS[entry.reason]) return REASON_CODE_LABELS[entry.reason];
+  if (entry.reason) return entry.reason; // a genuine human-written note — show as-is
+  if (entry.event_type && EVENT_TYPE_LABELS[entry.event_type]) return EVENT_TYPE_LABELS[entry.event_type];
+  return entry.event_type || '(event)';
+}
 
 function populateAuditFilter(events) {
   const select = document.getElementById('audit-action-filter');
@@ -1708,13 +1856,19 @@ PAGE_LOADERS.templates = () => { initTemplatesPage(); refreshTemplates(); };
 const PIPELINE_STEPS = ['DRAFT_PENDING', 'DRAFT_READY', 'SENDING', 'COMPLETED'];
 const PIPELINE_LABELS = { DRAFT_PENDING: 'Draft', DRAFT_READY: 'Ready', SENDING: 'Sending', COMPLETED: 'Sent' };
 
+const TERMINAL_PIPELINE_LABELS = {
+  MANUAL_REVIEW: 'Paused for review',
+  FAILED: 'Failed',
+  HELD: 'Held — emergency stop',
+  SUPERSEDED: 'Superseded',
+};
 function renderPipeline(status) {
   const wrap = document.createElement('div');
   wrap.className = 'execution-pipeline';
-  if (status === 'MANUAL_REVIEW' || status === 'FAILED') {
+  if (TERMINAL_PIPELINE_LABELS[status]) {
     const step = document.createElement('span');
     step.className = 'pipeline-step';
-    step.textContent = status === 'MANUAL_REVIEW' ? 'Paused for review' : 'Failed';
+    step.textContent = TERMINAL_PIPELINE_LABELS[status];
     wrap.appendChild(step);
     return wrap;
   }
@@ -1743,7 +1897,7 @@ function renderExecutions(list) {
   }
   list.forEach((ex) => {
     const card = document.createElement('div');
-    card.className = `execution-card${ex.status === 'MANUAL_REVIEW' ? ' is-review' : ''}`;
+    card.className = `execution-card${(ex.status === 'MANUAL_REVIEW' || ex.status === 'HELD') ? ' is-review' : ''}`;
 
     const head = document.createElement('div');
     head.className = 'execution-head';
@@ -1763,6 +1917,24 @@ function renderExecutions(list) {
       const reassure = document.createElement('p');
       reassure.className = 'execution-reassurance';
       reassure.textContent = `${ex.status_reason || 'Paused on uncertainty.'} ARGUS stops and asks rather than risk a silent double-send or a lost email — this execution is waiting on a human decision, nothing has been lost.`;
+      card.appendChild(reassure);
+    }
+
+    if (ex.status === 'HELD') {
+      const reassure = document.createElement('p');
+      reassure.className = 'execution-reassurance';
+      // Honest about a known limitation (see DEFERRED.md, "Fence B"): nothing
+      // was sent, but there's no automatic resume once the hold clears — no
+      // Reopen button here would actually do anything, so this doesn't offer one.
+      reassure.textContent = `${ex.status_reason || 'Held before reaching Gmail — most likely Emergency Stop was engaged.'} Nothing was sent. This is a held state without an automatic resume yet — if it stays stuck after disengaging Emergency Stop, that's expected today, not a sign something went wrong.`;
+      card.appendChild(reassure);
+    }
+
+    if (ex.status === 'SUPERSEDED') {
+      const reassure = document.createElement('p');
+      reassure.className = 'execution-reassurance';
+      reassure.style.color = 'var(--color-secondary-ink)';
+      reassure.textContent = 'Replaced by a newer approval of the same request before this one reached Gmail. Nothing was sent from this attempt — purely historical.';
       card.appendChild(reassure);
     }
 
@@ -1840,43 +2012,38 @@ PAGE_LOADERS.executions = () => {
 };
 
 // ── private contacts ─────────────────────────────────────────────────────────
-// ARGUS should never process or decide on emails involving these people. Local-
-// first today (localStorage); every save also calls savePrivateContacts() — a
-// no-op (NOT_WIRED) until PRIVATE_CONTACTS_ENDPOINT is set in api.js. Phase 8
-// (server-side enforcement before the AI sees email content): fill that constant.
-const CONTACTS_KEY = 'argus.privateContacts';
-
-function loadContacts() {
-  try { return JSON.parse(localStorage.getItem(CONTACTS_KEY)) || []; }
-  catch (e) { return []; }
-}
-
-function saveContacts(list) {
-  localStorage.setItem(CONTACTS_KEY, JSON.stringify(list));
-  // Phase 8: flips to server-authoritative once PRIVATE_CONTACTS_ENDPOINT is set (no-op until then).
-  savePrivateContacts(list);
-}
+// Server-authoritative (argus/private_contacts.py via /api/private-contacts).
+// Enforced at TWO points on the backend: before the agent ever interprets a
+// selected email from this address, and again at the executor right before any
+// send — so adding someone after a proposal is already approved still blocks
+// it. Matching is an EXACT normalized email address only, never a name, so the
+// add form validates for a real address instead of accepting free text.
+let privateContactsCache = [];
 
 function renderContacts() {
-  const list = loadContacts();
   const container = document.getElementById('contact-list');
   container.innerHTML = '';
-  if (!list.length) {
+  if (!privateContactsCache.length) {
     container.innerHTML = '<p class="empty-state">No private contacts added.</p>';
     return;
   }
-  list.forEach((name) => {
+  privateContactsCache.forEach((c) => {
     const item = document.createElement('div');
     item.className = 'contact-item';
     const label = document.createElement('span');
     label.className = 'contact-name';
-    label.textContent = name;
+    label.textContent = c.display_label ? `${c.display_label} <${c.normalized_email}>` : c.normalized_email;
     const removeBtn = document.createElement('button');
     removeBtn.className = 'contact-remove-btn';
     removeBtn.textContent = 'Remove';
-    removeBtn.addEventListener('click', () => {
-      saveContacts(loadContacts().filter((c) => c !== name));
-      renderContacts();
+    removeBtn.addEventListener('click', async () => {
+      removeBtn.disabled = true;
+      const result = await removePrivateContact(c.normalized_email);
+      if (result.ok && result.body.success) {
+        refreshPrivateContacts();
+      } else {
+        removeBtn.disabled = false;
+      }
     });
     item.appendChild(label);
     item.appendChild(removeBtn);
@@ -1884,20 +2051,40 @@ function renderContacts() {
   });
 }
 
-function initContacts() {
-  document.getElementById('contact-add-btn').addEventListener('click', () => {
-    const input = document.getElementById('contact-add-input');
-    const name = input.value.trim();
-    if (!name) { input.focus(); return; }
-    const list = loadContacts();
-    if (list.indexOf(name) === -1) {
-      list.push(name);
-      saveContacts(list);
-      renderContacts();
-    }
-    input.value = '';
-  });
+async function refreshPrivateContacts() {
+  const result = await fetchPrivateContacts();
+  privateContactsCache = (result.ok && result.body.success) ? result.body.contacts : [];
   renderContacts();
+}
+
+const EMAIL_PATTERN = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+
+function initContacts() {
+  const input = document.getElementById('contact-add-input');
+  const errorEl = document.getElementById('contact-add-error');
+  const btn = document.getElementById('contact-add-btn');
+  btn.addEventListener('click', async () => {
+    const value = input.value.trim();
+    if (!value) { input.focus(); return; }
+    if (!EMAIL_PATTERN.test(value)) {
+      if (errorEl) {
+        errorEl.hidden = false;
+        errorEl.textContent = "Enter a full email address — this only matches exact addresses, never names.";
+      }
+      return;
+    }
+    if (errorEl) errorEl.hidden = true;
+    btn.disabled = true;
+    const result = await addPrivateContact(value);
+    btn.disabled = false;
+    if (result.ok && result.body.success) {
+      input.value = '';
+      refreshPrivateContacts();
+    } else if (errorEl) {
+      errorEl.hidden = false;
+      errorEl.textContent = (result.body && result.body.detail) || 'Could not add contact — try again.';
+    }
+  });
 }
 
 // ── settings (profile switcher + emergency stop + integrations + contacts) ─
@@ -2024,8 +2211,8 @@ async function initExecutionDelay() {
 async function loadSettings() {
   initSettingsPage();
   syncProfileUI();
-  applyEstopUI();
-  renderContacts();
+  syncEstopUI();
+  refreshPrivateContacts();
   await refreshGmailStatus();
 }
 

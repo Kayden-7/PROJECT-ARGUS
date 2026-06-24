@@ -227,22 +227,21 @@ export async function resetDemo() {
   return request('/demo/reset', { method: 'POST' });
 }
 
-// ── Phase 8 endpoints (NOT YET LIVE) ────────────────────────────────────────
-// Emergency Stop and Private Contacts run local-only today (localStorage in
-// app.js). When the backend lands the real routes, set the two constants below
-// to the final paths — that is the ONLY change needed to go server-authoritative;
-// the wrappers already normalize errors into the same {ok,status,body} shape as
-// every other call here. Do NOT guess the paths — leave null until confirmed.
-export const ESTOP_ENDPOINT = null;            // TODO(phase8): e.g. '/api/emergency/stop'
-export const PRIVATE_CONTACTS_ENDPOINT = null; // TODO(phase8): e.g. '/api/contacts'
+// ── Phase 8 control-plane endpoints (live as of the 2026-06-24 backend) ────
 
-// POST <ESTOP_ENDPOINT> { engaged: bool }. No-op (NOT_WIRED) until the constant is set.
-export async function setEmergencyStop(engaged) {
-  if (!ESTOP_ENDPOINT) return { ok: false, status: 0, body: { error_code: 'NOT_WIRED' } };
-  return request(ESTOP_ENDPOINT, {
+// GET /api/system/emergency-stop -> { success, ok, engaged, epoch, updated_at, updated_by, reason }
+export async function fetchEmergencyStopStatus() {
+  return request('/api/system/emergency-stop', { method: 'GET' });
+}
+
+// POST /api/system/emergency-stop { engaged: bool, reason? } -> { success, engaged, epoch, transitioned }
+// Loopback-only when no ARGUS_CONTROL_TOKEN is configured server-side (see
+// app.py:_control_authorized) — fine for local/demo use, 403s otherwise.
+export async function setEmergencyStop(engaged, reason) {
+  return request('/api/system/emergency-stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ engaged }),
+    body: JSON.stringify(reason ? { engaged, reason } : { engaged }),
   });
 }
 
@@ -260,13 +259,44 @@ export async function setActiveProfile(profile) {
   });
 }
 
-// POST <PRIVATE_CONTACTS_ENDPOINT> { contacts: string[] }. No-op until the constant is set.
-export async function savePrivateContacts(contacts) {
-  if (!PRIVATE_CONTACTS_ENDPOINT) return { ok: false, status: 0, body: { error_code: 'NOT_WIRED' } };
-  return request(PRIVATE_CONTACTS_ENDPOINT, {
+// GET /api/private-contacts -> { success, contacts: [{id, normalized_email, display_label, enabled, created_at, updated_at}] }
+export async function fetchPrivateContacts() {
+  return request('/api/private-contacts', { method: 'GET' });
+}
+
+// POST /api/private-contacts { email, display_label?, reason? } -> { success, contact, reactivated }
+// Matching is EXACT normalized email only — no name matching, see argus/private_contacts.py.
+export async function addPrivateContact(email, displayLabel, reason) {
+  const body = { email };
+  if (displayLabel) body.display_label = displayLabel;
+  if (reason) body.reason = reason;
+  return request('/api/private-contacts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contacts }),
+    body: JSON.stringify(body),
+  });
+}
+
+// DELETE /api/private-contacts { email, reason? } -> { success, changed }
+export async function removePrivateContact(email, reason) {
+  const body = { email };
+  if (reason) body.reason = reason;
+  return request('/api/private-contacts', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+// POST /api/queue/<id>/reopen { reason } -> { success, id, status }
+// R-REOPEN (Phase 8 Part 6): recovers HELD / MANUAL_REVIEW_TIMEOUT / TRANSITION_LOCKED
+// items back to PENDING. Reason is required by the backend. Same loopback-only
+// auth as emergency-stop when no control token is configured.
+export async function reopenQueue(queueId, reason) {
+  return request(`/api/queue/${queueId}/reopen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
   });
 }
 

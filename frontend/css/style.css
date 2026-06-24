@@ -979,6 +979,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .execution-status-badge.status-completed { background: var(--color-evergreen-soft); color: var(--color-evergreen); }
 .execution-status-badge.status-manual_review { background: var(--color-amber-soft); color: var(--color-amber); }
 .execution-status-badge.status-failed { background: var(--color-oxblood-soft); color: var(--color-oxblood); }
+.execution-status-badge.status-held { background: var(--color-amber-soft); color: var(--color-amber); }
+.execution-status-badge.status-superseded { background: var(--color-slate-surface); color: var(--color-secondary-ink); }
 .execution-pipeline { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .pipeline-step { font-size: 11px; font-family: var(--font-mono); color: var(--color-hairline); }
 .pipeline-step.is-current { color: var(--color-evergreen); font-weight: 600; }

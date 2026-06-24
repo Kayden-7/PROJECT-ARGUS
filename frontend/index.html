@@ -431,11 +431,12 @@
 
     <div class="card">
       <div class="card-header">Private Contacts</div>
-      <p class="proposal-hint">ARGUS will not read or act on emails involving these people.</p>
+      <p class="proposal-hint">ARGUS will not read, act on, or send to these exact addresses — checked before the AI sees a selected email from them, and again right before any send.</p>
       <div class="contact-add-row">
-        <input type="text" id="contact-add-input" placeholder="Name or email address">
+        <input type="text" id="contact-add-input" placeholder="name@example.com">
         <button id="contact-add-btn" class="btn-secondary" style="width:auto;">Add</button>
       </div>
+      <p class="banner-message" id="contact-add-error" hidden style="color: var(--color-oxblood);"></p>
       <div id="contact-list"></div>
     </div>
   </div>

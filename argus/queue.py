@@ -212,10 +212,14 @@ def fetch_pending() -> list:
         for s in stale:
             _materialize_mr_timeout(db, s["id"], "MANUAL_REVIEW",
                                     s["manual_review_started_at"], s["manual_review_generation"])
+        # HELD / MANUAL_REVIEW_TIMEOUT / TRANSITION_LOCKED are recoverable only
+        # via reopen() — they must be listed here or they're invisible to any
+        # caller, recoverable in theory but unreachable in practice.
         rows = db.execute(
-            """SELECT * FROM approval_queue
-               WHERE status IN ('PENDING', 'MANUAL_REVIEW')
-               ORDER BY created_at ASC"""
+            "SELECT * FROM approval_queue WHERE status IN "
+            "('PENDING', 'MANUAL_REVIEW', " + ", ".join("?" for _ in REOPENABLE_QUEUE_STATES) + ") "
+            "ORDER BY created_at ASC",
+            REOPENABLE_QUEUE_STATES,
         ).fetchall()
         db.close()
         return [dict(r) for r in rows]

@@ -429,7 +429,7 @@ try:
     rr = reject(it2, 'no thanks')
     check('reject returns proposal_json', bool(rr.get('proposal_json')))
 
-    sec('[STRICT] fetch_pending — only PENDING + MANUAL_REVIEW, oldest first')
+    sec('[STRICT] fetch_pending — PENDING + MANUAL_REVIEW included, APPROVED excluded, oldest first')
     db = sqlite3.connect(DB_PATH); db.execute("DELETE FROM approval_queue"); db.commit(); db.close()
     p1 = enqueue(gated_proposal(), MOCK_DECISION)['id']; time.sleep(1)
     p2 = enqueue(gated_proposal(), MOCK_DECISION)['id']
