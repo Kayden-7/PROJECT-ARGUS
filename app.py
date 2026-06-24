@@ -15,6 +15,8 @@ ERROR_STATUS = {
     "ITEM_NOT_FOUND":           404,
     "INVALID_STATE_TRANSITION": 409,
     "UNDO_WINDOW_CLOSED":       409,
+    "REJECTION_REASON_TOO_LONG": 400,  # C6: operator reason over the 500-char cap
+    "INVALID_REASON":           400,
     "DB_ERROR":                 500,
 }
 
