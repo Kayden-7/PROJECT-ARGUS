@@ -163,6 +163,22 @@ export async function fetchGmailStatus() {
   return request('/api/gmail/status');
 }
 
+// GET /api/system/execution-delay — { success, seconds, updated_at }
+export async function fetchExecutionDelay() {
+  return request('/api/system/execution-delay');
+}
+
+// POST /api/system/execution-delay { seconds } -> { success, seconds, requested, clamped }
+// Server clamps to a 60s floor regardless of what's sent — the slider already
+// won't go below 1 minute, but this is the real enforcement point.
+export async function setExecutionDelay(seconds) {
+  return request('/api/system/execution-delay', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seconds }),
+  });
+}
+
 // POST /api/templates — { contact, action_type, settings:{...} } -> { success, id, version }
 export async function saveTemplate(payload) {
   return request('/api/templates', {

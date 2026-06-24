@@ -8,7 +8,9 @@ import {
   fetchAudit, fetchAuditSummary, fetchTrustHistory, fetchGmailStatus, fetchTrustSnapshot,
   fetchTemplates, saveTemplate, deleteTemplate, matchTemplate, fetchExecutions, tickExecutions,
   verifyAuditChain, fetchAuditReplay, resetDemo, gmailTest,
-  setEmergencyStop, savePrivateContacts, fetchActiveProfile, setActiveProfile,
+  setEmergencyStop, savePrivateContacts,
+  fetchExecutionDelay, setExecutionDelay,
+  fetchActiveProfile, setActiveProfile,
 } from './api.js';
 
 // Mirrors config.py ALL_ACTIONS — kept in sync manually, same approach used
@@ -149,6 +151,14 @@ function initLogin() {
 // ── workbench: nav ──────────────────────────────────────────────────────
 const PAGE_LOADERS = {}; // populated below as each page's loader is defined
 
+// Single funnel for "a page is about to load" so page-scoped background work
+// (right now: the executions auto-poll interval) always gets torn down when
+// navigating away, no matter which of the three entry points triggered it.
+function dispatchPageLoad(page) {
+  stopExecutionsPolling();
+  if (PAGE_LOADERS[page]) PAGE_LOADERS[page]();
+}
+
 function initGlobalNav() {
   document.querySelectorAll('.nav-link').forEach((link) => {
     // These are hrefless anchors — make them real keyboard-operable controls.
@@ -158,7 +168,7 @@ function initGlobalNav() {
       const page = link.getAttribute('data-page');
       setState({ currentPage: page });
       window.history.replaceState({}, '', `?page=${page}`);
-      if (PAGE_LOADERS[page]) PAGE_LOADERS[page]();
+      dispatchPageLoad(page);
     };
     link.addEventListener('click', go);
     link.addEventListener('keydown', (e) => {
@@ -276,7 +286,7 @@ function renderInbox() {
 
   if (!messages.length) {
     container.innerHTML = inboxFilterMode === 'unread'
-      ? '<p class="empty-state">Read/unread status isn’t available from Gmail metadata, so no messages can be marked unread here.</p>'
+      ? '<p class="empty-state">Unread status can’t be detected for any of your messages right now, so none are shown here.</p>'
       : '<p class="empty-state">No messages.</p>';
     return;
   }
@@ -442,6 +452,14 @@ function renderProposal(proposal) {
   } else {
     subjectRow.hidden = true;
   }
+
+  const bodyRow = document.getElementById('proposal-body-row');
+  if (entities.body) {
+    bodyRow.hidden = false;
+    document.getElementById('proposal-body').textContent = entities.body;
+  } else {
+    bodyRow.hidden = true;
+  }
 }
 
 // ── toast: queued-action notification (Task 3) ───────────────────────────
@@ -451,7 +469,7 @@ function renderProposal(proposal) {
 function navigateToPage(page) {
   setState({ currentPage: page });
   window.history.replaceState({}, '', `?page=${page}`);
-  if (PAGE_LOADERS[page]) PAGE_LOADERS[page]();
+  dispatchPageLoad(page);
 }
 
 function showQueueToast(actionType, expiresAt) {
@@ -674,7 +692,7 @@ function renderQueueItems(items) {
 
       const approveBtn = document.createElement('button');
       approveBtn.className = 'btn-primary';
-      approveBtn.textContent = 'Approve & Execute';
+      approveBtn.textContent = 'Approve';
 
       const rejectBtn = document.createElement('button');
       rejectBtn.className = 'btn-secondary';
@@ -703,14 +721,17 @@ function renderQueueItems(items) {
 
       approveBtn.addEventListener('click', async () => {
         approveBtn.disabled = true; rejectBtn.disabled = true;
-        statusLine.textContent = 'Approved. Checking execution outcome…';
+        statusLine.textContent = 'Approving…';
         const result = await approveQueue(item.id);
         if (!(result.ok && result.body.success)) {
           statusLine.textContent = (result.body && result.body.detail) || 'Approval failed.';
           approveBtn.disabled = false; rejectBtn.disabled = false;
           return;
         }
-        await tickExecutions();
+        // Approval does NOT execute immediately — it queues for execution after
+        // the configured delay (see Settings > Execution Delay). The Live
+        // Execution section below picks it up once that delay elapses.
+        statusLine.textContent = 'Approved — will execute after the delay window.';
         loadQueue();
         refreshExecutions();
       });
@@ -1487,10 +1508,11 @@ const PIPELINE_LABELS = { DRAFT_PENDING: 'Draft', DRAFT_READY: 'Ready', SENDING:
 function renderPipeline(status) {
   const wrap = document.createElement('div');
   wrap.className = 'execution-pipeline';
-  if (status === 'MANUAL_REVIEW' || status === 'FAILED') {
+  if (status === 'MANUAL_REVIEW' || status === 'FAILED' || status === 'SCHEDULED') {
     const step = document.createElement('span');
     step.className = 'pipeline-step';
-    step.textContent = status === 'MANUAL_REVIEW' ? 'Paused for review' : 'Failed';
+    step.textContent = status === 'MANUAL_REVIEW' ? 'Paused for review'
+      : status === 'FAILED' ? 'Failed' : 'Waiting for delay window';
     wrap.appendChild(step);
     return wrap;
   }
@@ -1510,8 +1532,11 @@ function renderPipeline(status) {
   return wrap;
 }
 
+let executionCountdownHandle = null;
+
 function renderExecutions(list) {
   const container = document.getElementById('execution-list');
+  if (executionCountdownHandle) { clearInterval(executionCountdownHandle); executionCountdownHandle = null; }
   container.innerHTML = '';
   if (!list.length) {
     container.innerHTML = '<p class="empty-state">No executions yet.</p>';
@@ -1532,8 +1557,24 @@ function renderExecutions(list) {
     badge.className = `execution-status-badge status-${ex.status.toLowerCase()}`;
     badge.textContent = ex.status.replace('_', ' ');
     head.appendChild(badge);
-    head.appendChild(renderPipeline(ex.status));
+
+    if (ex.status === 'SCHEDULED') {
+      const countdown = document.createElement('span');
+      countdown.className = 'execution-countdown';
+      countdown.setAttribute('data-execute-at', String(ex.execute_at));
+      head.appendChild(countdown);
+    } else {
+      head.appendChild(renderPipeline(ex.status));
+    }
     card.appendChild(head);
+
+    if (ex.status === 'SCHEDULED') {
+      const reassure = document.createElement('p');
+      reassure.className = 'execution-reassurance';
+      reassure.style.color = 'var(--color-secondary-ink)';
+      reassure.textContent = 'Approved. It will send automatically the moment the countdown ends — no further action needed.';
+      card.appendChild(reassure);
+    }
 
     if (ex.status === 'MANUAL_REVIEW') {
       const reassure = document.createElement('p');
@@ -1542,13 +1583,32 @@ function renderExecutions(list) {
       card.appendChild(reassure);
     }
 
-    const meta = document.createElement('div');
-    meta.className = 'execution-meta';
-    meta.textContent = `attempt ${ex.attempt_count}` + (ex.message_id ? ` · message ${ex.message_id}` : ex.draft_id ? ` · draft ${ex.draft_id}` : '');
-    card.appendChild(meta);
+    if (ex.status !== 'SCHEDULED') {
+      const meta = document.createElement('div');
+      meta.className = 'execution-meta';
+      meta.textContent = `attempt ${ex.attempt_count}` + (ex.message_id ? ` · message ${ex.message_id}` : ex.draft_id ? ` · draft ${ex.draft_id}` : '');
+      card.appendChild(meta);
+    }
 
     container.appendChild(card);
   });
+
+  const tickAll = () => {
+    const spans = document.querySelectorAll('#execution-list .execution-countdown');
+    if (!spans.length) { clearInterval(executionCountdownHandle); executionCountdownHandle = null; return; }
+    spans.forEach((span) => {
+      const executeAt = Number(span.getAttribute('data-execute-at'));
+      const remaining = executeAt - Math.floor(Date.now() / 1000);
+      if (remaining <= 0) {
+        span.textContent = 'Sending now…';
+      } else {
+        span.textContent = `Sends in ${formatCountdown(remaining)}`;
+        span.classList.toggle('is-urgent', remaining <= 10);
+      }
+    });
+  };
+  tickAll();
+  executionCountdownHandle = setInterval(tickAll, 1000);
 }
 
 async function refreshExecutions() {
@@ -1556,19 +1616,51 @@ async function refreshExecutions() {
   if (result.ok) renderExecutions(result.body);
 }
 
+// Auto-advance the pipeline without the user clicking "Check for updates":
+// while the Executions page is open, poll the server every few seconds so a
+// SCHEDULED item's delay elapsing, a draft being created, and the actual send
+// all happen on their own. Started by PAGE_LOADERS.executions, stopped by
+// dispatchPageLoad() the moment the user navigates anywhere else.
+let executionsPollHandle = null;
+function startExecutionsPolling() {
+  stopExecutionsPolling();
+  executionsPollHandle = setInterval(() => { refreshExecutions(); }, 4000);
+}
+function stopExecutionsPolling() {
+  if (executionsPollHandle) { clearInterval(executionsPollHandle); executionsPollHandle = null; }
+}
+
 let executionsInitialized = false;
 function initExecutionsPage() {
   if (executionsInitialized) return;
   executionsInitialized = true;
   document.getElementById('executions-tick-btn').addEventListener('click', async () => {
-    await tickExecutions();
+    const status = document.getElementById('executions-tick-status');
+    if (status) status.textContent = 'Checking…';
+    const result = await tickExecutions();
+    if (status) {
+      if (result.ok && result.body.success) {
+        const counts = result.body.counts || {};
+        const parts = Object.entries(counts).map(([k, v]) => `${v} ${k.toLowerCase()}`);
+        status.textContent = parts.length ? `Now: ${parts.join(', ')}.` : 'Nothing in the execution pipeline right now.';
+      } else {
+        status.textContent = (result.body && result.body.detail) || 'Could not check for updates — try again.';
+      }
+    }
     refreshExecutions();
   });
 }
 
 // Executions page now hosts both sections (Task 1): the approval queue and the
-// live execution pipeline. Load both whenever the page is opened.
-PAGE_LOADERS.executions = () => { initExecutionsPage(); loadQueue(); refreshExecutions(); };
+// live execution pipeline. Load both whenever the page is opened, and keep
+// polling automatically (see startExecutionsPolling) for as long as the user
+// stays on this page.
+PAGE_LOADERS.executions = () => {
+  initExecutionsPage();
+  loadQueue();
+  refreshExecutions();
+  startExecutionsPolling();
+};
 
 // ── private contacts ─────────────────────────────────────────────────────────
 // ARGUS should never process or decide on emails involving these people. Local-
@@ -1698,22 +1790,57 @@ function initSettingsPage() {
   document.getElementById('gmail-test-btn').addEventListener('click', handleGmailTest);
 }
 
-// Execution delay slider (Task 9a) — frontend-only preference persisted to
-// localStorage. Backend enforcement of the delay lands in Phase 8 Part 5.
+// Execution delay slider — backend-enforced (server clamps to a 1-minute
+// floor regardless of what's sent; see kernel.MIN_EXECUTION_DELAY_SECONDS).
+// The same window the executor waits out before sending IS the cancel/undo
+// window shown on queue items ("Cancels in…") — one number, two effects.
 function setExecutionDelayDisplay(minutes) {
   document.getElementById('execution-delay-display').textContent =
     `${minutes} minute${String(minutes) === '1' ? '' : 's'}`;
 }
 
-function initExecutionDelay() {
+async function initExecutionDelay() {
   const slider = document.getElementById('execution-delay-slider');
+  const status = document.getElementById('execution-delay-status');
   if (!slider) return;
-  const saved = localStorage.getItem('argus.execution_delay') || '4';
-  slider.value = saved;
-  setExecutionDelayDisplay(saved);
-  slider.addEventListener('input', () => {
-    localStorage.setItem('argus.execution_delay', slider.value);
-    setExecutionDelayDisplay(slider.value);
+
+  // Seed from localStorage instantly so the slider isn't blank while the
+  // network call resolves, then reconcile with the server's real value.
+  const cached = localStorage.getItem('argus.execution_delay') || '4';
+  slider.value = cached;
+  setExecutionDelayDisplay(cached);
+
+  const result = await fetchExecutionDelay();
+  if (result.ok && result.body.success) {
+    const minutes = Math.max(1, Math.round(result.body.seconds / 60));
+    slider.value = String(minutes);
+    setExecutionDelayDisplay(minutes);
+    localStorage.setItem('argus.execution_delay', String(minutes));
+  }
+
+  slider.addEventListener('input', () => setExecutionDelayDisplay(slider.value));
+
+  // Write on release (not every 'input' tick) — one request per adjustment,
+  // not one per pixel of drag.
+  slider.addEventListener('change', async () => {
+    const minutes = Number(slider.value);
+    localStorage.setItem('argus.execution_delay', String(minutes));
+    if (status) status.textContent = 'Saving…';
+    const res = await setExecutionDelay(minutes * 60);
+    if (!res.ok || !res.body.success) {
+      if (status) status.textContent = (res.body && res.body.detail) || 'Could not save — try again.';
+      return;
+    }
+    if (res.body.clamped) {
+      const clampedMinutes = Math.max(1, Math.round(res.body.seconds / 60));
+      slider.value = String(clampedMinutes);
+      setExecutionDelayDisplay(clampedMinutes);
+      localStorage.setItem('argus.execution_delay', String(clampedMinutes));
+      if (status) status.textContent = `Delay can't go below 1 minute — set to ${clampedMinutes} minute(s).`;
+    } else if (status) {
+      status.textContent = 'Saved.';
+      setTimeout(() => { if (status.textContent === 'Saved.') status.textContent = ''; }, 2000);
+    }
   });
 }
 
@@ -1736,7 +1863,7 @@ function init() {
   if (isAuthenticated) {
     initWorkbench();
     const page = getState().currentPage;
-    if (page !== 'workbench' && PAGE_LOADERS[page]) PAGE_LOADERS[page]();
+    if (page !== 'workbench') dispatchPageLoad(page);
   }
 }
 

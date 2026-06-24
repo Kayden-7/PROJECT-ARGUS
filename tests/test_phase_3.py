@@ -171,23 +171,23 @@ try:
     check('cancel non-existent id -> ITEM_NOT_FOUND', cancel('fake-id')['error_code'] == 'ITEM_NOT_FOUND')
 
     # ── Undo window closed ─────────────────────────────────────────────────────
+    # UNDO_WINDOW_SECONDS now has a hard 1-minute floor enforced on read (see
+    # kernel.MIN_EXECUTION_DELAY_SECONDS) — shrinking it to simulate a closed
+    # window no longer works. Instead, backdate approved_at directly so the
+    # window has elapsed regardless of its length, with no real sleep needed.
     sec('Queue Functions — undo window enforcement')
-    db = sqlite3.connect(DB_PATH)
-    db.execute("UPDATE system_state SET value='1' WHERE key='UNDO_WINDOW_SECONDS'")
-    db.commit()
-    db.close()
-
     r_undo = enqueue(gated_proposal(), MOCK_DECISION)
     undo_id = r_undo['id']
     approve(undo_id)
-    time.sleep(2)  # window is 1s, wait for it to close
-    r_late = cancel(undo_id)
-    check('Cancel after undo window closed -> UNDO_WINDOW_CLOSED', r_late.get('error_code') == 'UNDO_WINDOW_CLOSED')
 
     db = sqlite3.connect(DB_PATH)
-    db.execute("UPDATE system_state SET value='30' WHERE key='UNDO_WINDOW_SECONDS'")
+    db.execute("UPDATE approval_queue SET approved_at=? WHERE id=?",
+               (int(time.time()) - 9999, undo_id))
     db.commit()
     db.close()
+
+    r_late = cancel(undo_id)
+    check('Cancel after undo window closed -> UNDO_WINDOW_CLOSED', r_late.get('error_code') == 'UNDO_WINDOW_CLOSED')
 
     # ── All invalid transitions ────────────────────────────────────────────────
     sec('Queue Functions — invalid transitions matrix')
@@ -399,7 +399,7 @@ try:
 
     # ══ STRICT TEACHER — exact boundaries + full transition matrix ════════════
     sec('[STRICT] Undo-window boundary on cancel')
-    win = 30  # default UNDO_WINDOW_SECONDS
+    win = 60  # default UNDO_WINDOW_SECONDS (1-minute floor — see kernel.MIN_EXECUTION_DELAY_SECONDS)
     it = enqueue(gated_proposal(), MOCK_DECISION)['id']; approve(it)
     _dbset(it, approved_at=int(time.time()) - (win - 2))   # just inside window
     check('cancel just inside window allowed', cancel(it).get('success') is True)

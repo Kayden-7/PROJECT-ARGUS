@@ -151,6 +151,57 @@ def set_hard_stop(engaged: bool, updated_by: str = "control", reason=None) -> di
         conn.close()
 
 
+# ── Execution delay (Settings > Execution Delay) ────────────────────────────
+# Reuses UNDO_WINDOW_SECONDS: the same window both lets a user cancel an
+# approved action AND gates when the executor is allowed to promote it to a
+# real send (see executor.promote_approved). One number, two effects.
+MIN_EXECUTION_DELAY_SECONDS = 60  # hard floor — never send sooner than this
+
+
+def get_execution_delay() -> dict:
+    try:
+        conn = sqlite3.connect(DATABASE)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT value, updated_at FROM system_state WHERE key='UNDO_WINDOW_SECONDS'"
+        ).fetchone()
+        conn.close()
+        raw = int(row["value"]) if row else MIN_EXECUTION_DELAY_SECONDS
+        # Floor enforced on read too — must match what executor/queue actually
+        # use, or this endpoint would report a number nothing else honors
+        # (e.g. a pre-existing row seeded at the old 30s default).
+        seconds = max(MIN_EXECUTION_DELAY_SECONDS, raw)
+        return {"success": True, "seconds": seconds, "updated_at": row["updated_at"] if row else None}
+    except Exception as e:
+        return {"success": False, "error_code": "STATE_READ_FAILED", "detail": str(e)[:120]}
+
+
+def set_execution_delay(seconds, updated_by: str = "control") -> dict:
+    """Clamp to the floor server-side — the frontend slider already won't go
+    below 1 minute, but a direct API call must not be able to bypass that."""
+    if not isinstance(seconds, int) or isinstance(seconds, bool):
+        return {"success": False, "error_code": "INVALID_SECONDS"}
+    clamped = max(MIN_EXECUTION_DELAY_SECONDS, seconds)
+    now = int(time.time())
+    try:
+        conn = sqlite3.connect(DATABASE)
+        cur = conn.execute(
+            "UPDATE system_state SET value=?, updated_at=?, updated_by=? "
+            "WHERE key='UNDO_WINDOW_SECONDS'",
+            (str(clamped), now, updated_by))
+        if cur.rowcount != 1:
+            conn.execute(
+                "INSERT INTO system_state (key, value, updated_at, updated_by) "
+                "VALUES ('UNDO_WINDOW_SECONDS', ?, ?, ?)",
+                (str(clamped), now, updated_by))
+        conn.commit()
+        conn.close()
+        return {"success": True, "seconds": clamped, "requested": seconds,
+                "clamped": clamped != seconds}
+    except Exception as e:
+        return {"success": False, "error_code": "STATE_WRITE_FAILED", "detail": str(e)[:120]}
+
+
 VALID_PROFILES = ("Strict", "Balanced", "Autonomous")
 
 

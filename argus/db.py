@@ -371,7 +371,7 @@ def init_db():
     db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('HARD_STOP_EPOCH', '0')")
     db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('ACTIVE_PROFILE', 'Balanced')")
     db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
-    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('UNDO_WINDOW_SECONDS', '30')")
+    db.execute("INSERT OR IGNORE INTO system_state (key, value) VALUES ('UNDO_WINDOW_SECONDS', '60')")
 
     db.execute("INSERT OR IGNORE INTO permission_profiles VALUES ('Balanced', 1)")
     db.execute("INSERT OR IGNORE INTO permission_profiles VALUES ('Strict', 0)")
