@@ -155,9 +155,36 @@ try:
     sec('[STRICT] /demo/reset fails closed when not in demo mode')
     check('demo reset disabled by default -> 403', cl.post('/demo/reset').status_code == 403)
     from argus.demo import reset_demo
+    # Seed some state that reset must actually clear, then reset.
+    _seed = sqlite3.connect(DB_PATH)
+    _seed.execute("INSERT INTO audit_events (timestamp,event_type,payload_json,entry_hash) "
+                  "VALUES (1,'TRUST_CHANGED','{}','seed-hash')")
+    _seed.execute("UPDATE system_state SET value='5' WHERE key='HARD_STOP_EPOCH'")
+    _seed.commit(); _seed.close()
     out = reset_demo()
     check('reset_demo() returns demo_run_id', bool(out.get("demo_run_id")))
     check('reset clears agent_proposals', db_count('agent_proposals') == 0)
+    # Regression: reset must wipe the LIVE audit table (audit_events), not the
+    # dead audit_log; must clear Phase 8 admission/queue tables; must reset the
+    # hard-stop epoch; and must leave audit_events append-only again.
+    check('reset clears audit_events (the live audit trail)', db_count('audit_events') == 0)
+    check('reset clears proposal_dedup', db_count('proposal_dedup') == 0)
+    check('reset clears rate_limits', db_count('rate_limits') == 0)
+    check('reset clears queue_transition_attempts', db_count('queue_transition_attempts') == 0)
+    _chk = sqlite3.connect(DB_PATH)
+    _epoch = _chk.execute("SELECT value FROM system_state WHERE key='HARD_STOP_EPOCH'").fetchone()[0]
+    check('reset returns HARD_STOP_EPOCH to 0', _epoch == '0', got=_epoch)
+    # BEFORE DELETE fires per-row, so the guard needs a row present to trip.
+    _chk.execute("INSERT INTO audit_events (timestamp,event_type,payload_json,entry_hash) "
+                 "VALUES (1,'X','{}','guard-probe')")
+    _chk.commit()
+    _append_only = False
+    try:
+        _chk.execute("DELETE FROM audit_events")
+    except sqlite3.Error:
+        _append_only = True
+    _chk.rollback(); _chk.close()
+    check('audit_events append-only guard restored after reset', _append_only)
 
 finally:
     print()
