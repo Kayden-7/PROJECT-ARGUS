@@ -27,6 +27,12 @@ INVALID_TRANSITION_LIMIT  = 5    # invalid attempts in window before auto-lock
 # resurrect a terminal/claimed item.
 LOCKABLE_STATES = ("PENDING", "MANUAL_REVIEW", "MANUAL_REVIEW_TIMEOUT")
 
+# R-REOPEN (Part 6): the only queue states an owner may recover back to PENDING.
+# CANCELLED is deliberately absent — cancellation is TERMINAL; to act again the
+# user issues a fresh command (a new proposal, a new queue item). This closes the
+# ambiguous-delivery double-send path that a cancel→reopen route would reopen.
+REOPENABLE_QUEUE_STATES = ("HELD", "MANUAL_REVIEW_TIMEOUT", "TRANSITION_LOCKED")
+
 
 def _db():
     db = sqlite3.connect(DATABASE)
@@ -207,14 +213,28 @@ def approve(item_id: str) -> dict:
             db.close()
             return res
 
+        # Part 6 atomic-approval guard: never approve while the emergency stop is
+        # engaged, and stamp the approval with the live epoch + a fresh generation.
+        # The epoch lets the executor preflight reject a stale APPROVED item; the
+        # generation gives this approval cycle a unique execution identity so a
+        # superseded execution can never collide with a re-approved one.
+        from argus import kernel
+        snap = kernel._hard_stop_snapshot(conn=db)
+        if not snap.get("ok") or snap.get("engaged"):
+            db.close()
+            return {"success": False, "error_code": "HARD_STOP_ACTIVE",
+                    "detail": "Emergency stop is engaged — approvals are blocked."}
+        epoch = snap["epoch"]
+
         now = int(time.time())
         _record_attempt(db, item_id, current, "APPROVED", valid=True)
         affected = db.execute(
             """UPDATE approval_queue
                SET status='APPROVED', approved_at=?, updated_at=?,
-                   version=version+1, status_reason=NULL
+                   version=version+1, approval_generation=approval_generation+1,
+                   approval_epoch=?, status_reason=NULL
                WHERE id=? AND status=?""",
-            (now, now, item_id, current)
+            (now, now, epoch, item_id, current)
         ).rowcount
         db.commit()
         db.close()
@@ -379,6 +399,97 @@ def to_manual_review(item_id: str, reason: str = "Routed to manual review") -> d
                     idempotency_key=f"{item_id}:MANUAL_REVIEW:{now}", outcome="MANUAL_REVIEW",
                     payload={"from": current, "to": "MANUAL_REVIEW"})
         return {"success": True, "id": item_id, "status": "MANUAL_REVIEW"}
+    except Exception as e:
+        return {"success": False, "error_code": "DB_ERROR", "detail": str(e)}
+
+
+def reopen(item_id: str, reason: str, actor: str = "owner") -> dict:
+    """R-REOPEN (Part 6): owner-only recovery from HELD / MANUAL_REVIEW_TIMEOUT /
+    TRANSITION_LOCKED back to PENDING. Branches by the linked execution's state so
+    a reopen can NEVER resurrect an ambiguous-delivery send.
+
+    INVARIANT: at most one Gmail send per queue item, ever. Reopen alone can never
+    cause a second send — it only proceeds when the linked execution is provably
+    pre-send (superseded), proven-unsent, or absent.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        return {"success": False, "error_code": "REASON_REQUIRED"}
+    if len(reason) > 500:
+        return {"success": False, "error_code": "REJECTION_REASON_TOO_LONG"}
+
+    try:
+        db = _db()
+        row = db.execute(
+            "SELECT status, approval_generation FROM approval_queue WHERE id=?", (item_id,)
+        ).fetchone()
+        if not row:
+            db.close()
+            return _not_found(item_id)
+
+        qstatus = row["status"]
+        gen = row["approval_generation"]
+        if qstatus not in REOPENABLE_QUEUE_STATES:
+            db.close()
+            return {"success": False, "error_code": "INVALID_REOPEN_STATE",
+                    "current_state": qstatus}
+
+        now = int(time.time())
+
+        # Inspect the linked execution for THIS approval generation (at most one,
+        # via UNIQUE(approval_id, approval_generation)).
+        ex = db.execute(
+            "SELECT execution_id, status FROM pending_executions "
+            "WHERE approval_id=? AND approval_generation=? ORDER BY rowid DESC LIMIT 1",
+            (item_id, gen)).fetchone()
+        if ex is not None:
+            es = ex["status"]
+            if es in ("SENDING", "MANUAL_REVIEW"):
+                # Delivery may have crossed the Gmail boundary — never supersede.
+                db.close()
+                return {"success": False, "error_code": "EXECUTION_OUTCOME_UNRESOLVED",
+                        "detail": "Delivery outcome unresolved — resolve before reopening."}
+            if es == "COMPLETED":
+                # Already sent: reconcile the queue forward, do not reopen.
+                db.execute(
+                    "UPDATE approval_queue SET status='EXECUTED', updated_at=?, version=version+1 "
+                    "WHERE id=? AND status=?", (now, item_id, qstatus))
+                db.commit(); db.close()
+                return {"success": False, "error_code": "ALREADY_EXECUTED"}
+            if es in ("DRAFT_PENDING", "DRAFT_READY", "HELD"):
+                # Fence A — claim-conditional supersede: only an UNCLAIMED pre-send
+                # row may be superseded. If the executor claimed it mid-reopen
+                # (owner_token set, or status moved on), this affects 0 rows -> refuse.
+                superseded = db.execute(
+                    "UPDATE pending_executions SET status='SUPERSEDED', updated_at=? "
+                    "WHERE execution_id=? AND approval_generation=? AND owner_token IS NULL "
+                    "AND status IN ('DRAFT_PENDING','DRAFT_READY','HELD')",
+                    (now, ex["execution_id"], gen)).rowcount
+                if superseded != 1:
+                    db.rollback(); db.close()
+                    return {"success": False, "error_code": "EXECUTION_OUTCOME_UNRESOLVED",
+                            "detail": "Execution was claimed concurrently — cannot reopen."}
+            # es in ('FAILED','SUPERSEDED'): proven-unsent / already-superseded —
+            # nothing to supersede, reopen proceeds.
+
+        affected = db.execute(
+            "UPDATE approval_queue SET status='PENDING', updated_at=?, version=version+1, "
+            "transition_lock_reason=NULL, transition_locked_at=NULL, "
+            "manual_review_started_at=NULL, status_reason=? "
+            "WHERE id=? AND status=?",
+            (now, reason[:500], item_id, qstatus)).rowcount
+        if affected != 1:
+            db.rollback(); db.close()
+            return _invalid_transition("REOPEN", qstatus)
+
+        from argus import audit
+        rec = audit.record("QUEUE_REOPENED", correlation_id=item_id, outcome="PENDING",
+                           reason=reason[:500],
+                           payload={"actor": actor, "from": qstatus, "to": "PENDING"}, db=db)
+        if not rec.get("recorded"):
+            db.rollback(); db.close()
+            return {"success": False, "error_code": "AUDIT_WRITE_FAILED"}
+        db.commit(); db.close()
+        return {"success": True, "id": item_id, "status": "PENDING"}
     except Exception as e:
         return {"success": False, "error_code": "DB_ERROR", "detail": str(e)}
 

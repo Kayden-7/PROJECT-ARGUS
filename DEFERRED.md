@@ -159,6 +159,26 @@ A consumer provider not on the list could be added to TRUSTED_DOMAINS later. Con
 - **Audit pagination** beyond the bounded limit, and a per-demo-run chain genesis on `/demo/reset` (currently the chain continues across resets).
 - **Scheduled monthly review reminder** — kept on-demand for the demo.
 
+## Phase 8 Part 6 — Fence B (FAILED→queue HELD bridge) — deferred after stress test
+
+Part 6 built atomic generation/epoch stamping, Fence A (claim-conditional supersede),
+state-branched R-REOPEN, and the Control 1 executor preflight (hard stop / stale
+epoch → HELD with owner_token cleared). **Fence B was deferred**: it would bridge a
+Phase-5-confirmed `MANUAL_REVIEW → FAILED` (proven-unsent) execution to move its
+linked queue item to `HELD` (reason `EXECUTION_PROVEN_UNSENT`) in the same txn, so it
+becomes reopen-eligible.
+
+Why deferred: nothing in the live code currently RESOLVES an execution to `FAILED`
+(the executor fails closed to `MANUAL_REVIEW` on every uncertainty and never proves
+non-delivery — see "Auto-resume of crashed SENDING jobs" above). With no producer of
+proven-unsent `FAILED`, Fence B has no trigger to fire on. Reopen already handles a
+`FAILED` execution defensively (reopens without superseding), so the only missing
+piece is the automatic MANUAL_REVIEW→FAILED→queue-HELD reconciliation. Build this when
+a real proven-unsent detector exists (depends on the deferred Gmail delivery-proof work).
+
+Not demo-critical: the emergency-stop halt, private-contact block, audit trail, and
+the at-most-one-send invariant all hold without it.
+
 ## Post-Competition Vision
 
 Run ARGUS as a Claude-native tool (not a website). 
