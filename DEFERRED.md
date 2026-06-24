@@ -104,8 +104,15 @@ These were identified across 4 stress-test passes on the Gmail execution layer. 
 ### True exactly-once delivery / atomic Gmail+local state
 Currently: Gmail sits outside the SQLite transaction, so we can't make send + local commit atomic. We handle this by failing closed (crashed/ambiguous SENDING → MANUAL_REVIEW, never auto-resume). Production: a proper outbox pattern / distributed transaction coordinator, or a provider that supports idempotency keys.
 
-### Auto-resume of crashed SENDING jobs
-Currently: any crashed SENDING job goes to MANUAL_REVIEW — a human resolves it. Deferred: safe automatic resume requires proving the prior send request never crossed the Gmail boundary (owner liveness detection, request-boundary fencing). Hard problem; not worth it for single-user demo.
+### Auto-resume of crashed SENDING jobs — DONE (commit 55ea65e, Baldwin)
+Implemented: crash recovery no longer guesses. It checks draft_exists() — Gmail
+consumes a draft the instant it sends, so a still-present draft proves the send
+never went out (safe resume from DRAFT_READY, no double-send); a gone draft is a
+confirmed send (COMPLETED); only an inconclusive check (the read itself fails) or a
+crash with no draft on record falls back to MANUAL_REVIEW. Covered by
+test_executor_independent (all three branches) + Phase 5. The remaining residual
+risk (a draft removed by something OTHER than a send) doesn't occur in the
+single-user controlled flow where ARGUS owns the draft it created.
 
 ### Background worker / continuous reconciliation
 Currently: reconcile-on-read (runs on API calls). If nobody touches the app, nothing executes. Deferred: a real scheduled worker/heartbeat so execution is time-driven, not read-driven. Skipped because background threads on Flask/Replit are flaky and unneeded for a live demo.

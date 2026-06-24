@@ -163,9 +163,14 @@ try:
     check('still exactly one trust event', t == 1, got=t)
 
     # ── Fail-closed paths ────────────────────────────────────────────────────
-    sec('Fail-closed — crashed SENDING never auto-resumes')
-    clean(); install_mock(FakeGmail())
+    sec('Fail-closed — crashed SENDING verifies outcome, never double-sends')
+    # New crash-recovery contract (commit 55ea65e): a crashed SENDING is not a
+    # guess. Gmail consumes a draft the instant it sends, so a still-present draft
+    # proves it never went out -> safe to resume from DRAFT_READY. The safety
+    # property preserved here: recovery NEVER calls send_draft (no double-send).
+    clean(); fake = FakeGmail(); install_mock(fake)
     eid = str(uuid.uuid4()); now = int(time.time())
+    fake.drafts['d1'] = {"to": ["a@b.com"], "cc": [], "bcc": []}  # draft still present => never sent
     c = db()
     c.execute("INSERT INTO pending_executions (execution_id,approval_id,action_type,payload_json,"
               "status,draft_id,owner_token,attempt_count,approved_at,execute_after,created_at,updated_at) "
@@ -173,7 +178,9 @@ try:
               (eid,'aS','email.send.external','{}','d1','tok',now,now,now,now))
     c.commit(); c.close()
     executor.advance_executions()
-    check('crashed SENDING -> MANUAL_REVIEW', one_exec()['status'] == 'MANUAL_REVIEW')
+    check('draft still present -> resumes to DRAFT_READY (not auto-completed)',
+          one_exec()['status'] == 'DRAFT_READY')
+    check('recovery never called send_draft (no double-send)', len(fake.sent) == 0)
 
     sec('Fail-closed — orphan-draft guard')
     clean()
@@ -316,13 +323,16 @@ try:
     check('promotes exactly at the boundary (approved_at+undo == now)', one_exec() is not None)
 
     sec('[STRICT] status_reason is non-empty on every MANUAL_REVIEW')
+    # A crashed SENDING with NO draft on record is genuinely unknown (can't verify),
+    # so recovery fails closed to MANUAL_REVIEW — which must always carry a reason.
     clean()
     now = int(time.time()); eid = str(uuid.uuid4()); c = db()
     c.execute("INSERT INTO pending_executions (execution_id,approval_id,action_type,payload_json,status,draft_id,owner_token,attempt_count,approved_at,execute_after,created_at,updated_at) "
-              "VALUES (?,?,?,?,'SENDING',?,?,1,?,?,?,?)",(eid,'aR','email.send.external','{}','d','t',now,now,now,now))
+              "VALUES (?,?,?,?,'SENDING',?,?,1,?,?,?,?)",(eid,'aR','email.send.external','{}',None,'t',now,now,now,now))
     c.commit(); c.close()
     install_mock(FakeGmail()); executor.advance_executions()
     e = one_exec()
+    check('MANUAL_REVIEW -> status', e['status'] == 'MANUAL_REVIEW', got=e['status'])
     check('MANUAL_REVIEW has a non-empty status_reason', bool(e['status_reason']) and len(e['status_reason']) > 0)
 
     sec('[STRICT] attempt_count increments exactly once per draft attempt')
