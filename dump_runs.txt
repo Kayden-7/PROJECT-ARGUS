@@ -1,0 +1,340 @@
+=== SLIDE 1 ===
+-- id=18 runs=1 paras=1
+   p0r0 bold=False sz=61.5 col=1B2A47 font='Georgia'
+-- id=20 runs=1 paras=1
+   p0r0 bold=False sz=31.5 col=2D6A4D font='Georgia'
+-- id=21 runs=1 paras=1
+   p0r0 bold=False sz=19.5 col=3B4A66 font='Arial'
+-- id=23 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Courier New'
+=== SLIDE 2 ===
+-- id=33 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+-- id=35 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=36 runs=1 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+-- id=37 runs=1 paras=1
+   p0r0 bold=False sz=22.5 col=1B2A47 font='Georgia'
+-- id=38 runs=8 paras=8
+   p0r0 bold=False sz=19.25 col=3B4A66 font='Arial'
+   p1r0 bold=None sz=None col=None font=None
+   p2r0 bold=False sz=19.25 col=3B4A66 font='Arial'
+   p3r0 bold=None sz=None col=None font=None
+   p4r0 bold=False sz=19.25 col=3B4A66 font='Arial'
+   p5r0 bold=None sz=None col=None font=None
+   p6r0 bold=None sz=None col=None font=None
+   p7r0 bold=None sz=None col=None font=None
+-- id=40 runs=1 paras=1
+   p0r0 bold=False sz=18.13 col=5A6680 font='Arial'
+-- id=41 runs=1 paras=1
+   p0r0 bold=False sz=25.49 col=1B2A47 font='Georgia'
+-- id=44 runs=3 paras=1
+   p0r0 bold=False sz=18.5 col=1B2A47 font='Arial'
+   p0r1 bold=True sz=18.5 col=2D6A4D font='Arial'
+   p0r2 bold=False sz=18.5 col=1B2A47 font='Arial'
+-- id=46 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=9A9384 font='Courier New'
+=== SLIDE 3 ===
+-- id=53 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=54 runs=1 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+-- id=55 runs=1 paras=1
+   p0r0 bold=False sz=16.5 col=3B4A66 font='Arial'
+-- id=57 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=9A9384 font='Courier New'
+-- id=58 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=1B2A47 font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=60 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=1B2A47 font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=62 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=1B2A47 font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=64 runs=3 paras=2
+   p0r0 bold=True sz=15.0 col=2D6A4D font='Arial'
+   p0r1 bold=False sz=15.0 col=1B2A47 font='Georgia'
+   p1r0 bold=None sz=None col=None font=None
+-- id=66 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=67 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=69 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Courier New'
+-- id=70 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=72 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Courier New'
+-- id=73 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=74 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=9A9384 font='Courier New'
+-- id=75 runs=2 paras=2
+   p0r0 bold=False sz=15.0 col=9A9384 font='Courier New'
+   p1r0 bold=None sz=None col=None font=None
+-- id=76 runs=2 paras=2
+   p0r0 bold=True sz=15.0 col=2D6A4D font='Courier New'
+   p1r0 bold=None sz=None col=None font=None
+-- id=79 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 4 ===
+-- id=87 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=88 runs=2 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+   p0r1 bold=False sz=40.5 col=5A6680 font='Georgia'
+-- id=89 runs=1 paras=1
+   p0r0 bold=False sz=15.5 col=2D6A4D font='Courier New'
+-- id=91 runs=1 paras=1
+   p0r0 bold=False sz=21.0 col=1B2A47 font='Georgia'
+-- id=92 runs=3 paras=1
+   p0r0 bold=False sz=19.5 col=3B4A66 font='Arial'
+   p0r1 bold=True sz=19.5 col=1B2A47 font='Arial'
+   p0r2 bold=False sz=19.5 col=3B4A66 font='Arial'
+-- id=93 runs=1 paras=1
+   p0r0 bold=False sz=16.5 col=5A6680 font='Courier New'
+-- id=95 runs=1 paras=1
+   p0r0 bold=False sz=16.5 col=B5443D font='Georgia'
+-- id=96 runs=1 paras=1
+   p0r0 bold=False sz=15.75 col=3B4A66 font='Arial'
+-- id=97 runs=1 paras=1
+   p0r0 bold=False sz=16.5 col=B5443D font='Georgia'
+-- id=98 runs=1 paras=1
+   p0r0 bold=False sz=15.75 col=3B4A66 font='Arial'
+-- id=99 runs=1 paras=1
+   p0r0 bold=False sz=16.5 col=B5443D font='Georgia'
+-- id=100 runs=1 paras=1
+   p0r0 bold=False sz=15.75 col=3B4A66 font='Arial'
+-- id=101 runs=1 paras=1
+   p0r0 bold=False sz=16.5 col=B5443D font='Georgia'
+-- id=102 runs=1 paras=1
+   p0r0 bold=False sz=15.75 col=3B4A66 font='Arial'
+-- id=106 runs=2 paras=1
+   p0r0 bold=True sz=17.78 col=2D6A4D font='Arial'
+   p0r1 bold=False sz=17.78 col=1B2A47 font='Arial'
+-- id=111 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 5 ===
+-- id=119 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=120 runs=2 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+   p0r1 bold=False sz=40.5 col=5A6680 font='Georgia'
+-- id=121 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Arial'
+-- id=123 runs=1 paras=1
+   p0r0 bold=False sz=20.0 col=7FB79B font='Courier New'
+-- id=124 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=A9B2C2 font='Arial'
+-- id=125 runs=2 paras=1
+   p0r0 bold=False sz=21.0 col=FBFAF6 font='Georgia'
+   p0r1 bold=False sz=21.0 col=7FB79B font='Georgia'
+-- id=127 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=B5443D font='Courier New'
+-- id=128 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=129 runs=1 paras=1
+   p0r0 bold=False sz=17.27 col=5A6680 font='Courier New'
+-- id=131 runs=1 paras=1
+   p0r0 bold=False sz=19.49 col=3B4A66 font='Arial'
+-- id=133 runs=1 paras=1
+   p0r0 bold=False sz=19.49 col=3B4A66 font='Arial'
+-- id=135 runs=1 paras=1
+   p0r0 bold=False sz=19.49 col=3B4A66 font='Arial'
+-- id=138 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=2D6A4D font='Arial'
+   p0r1 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=141 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 6 ===
+-- id=149 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=150 runs=2 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+   p0r1 bold=False sz=40.5 col=5A6680 font='Georgia'
+-- id=151 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Arial'
+-- id=153 runs=1 paras=1
+   p0r0 bold=True sz=17.5 col=1B2A47 font='Arial'
+-- id=154 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=B5443D font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=156 runs=1 paras=1
+   p0r0 bold=True sz=17.5 col=1B2A47 font='Arial'
+-- id=157 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=B5443D font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=159 runs=1 paras=1
+   p0r0 bold=True sz=17.5 col=1B2A47 font='Arial'
+-- id=160 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=B5443D font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=162 runs=1 paras=1
+   p0r0 bold=True sz=17.5 col=1B2A47 font='Arial'
+-- id=163 runs=2 paras=1
+   p0r0 bold=True sz=15.0 col=B5443D font='Arial'
+   p0r1 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=166 runs=2 paras=1
+   p0r0 bold=True sz=18.0 col=2D6A4D font='Arial'
+   p0r1 bold=False sz=18.0 col=1B2A47 font='Arial'
+-- id=169 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 7 ===
+-- id=177 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Courier New'
+-- id=178 runs=1 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+-- id=179 runs=2 paras=1
+   p0r0 bold=False sz=21.75 col=1B2A47 font='Georgia'
+   p0r1 bold=False sz=21.75 col=1B2A47 font='Georgia'
+-- id=182 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=183 runs=1 paras=1
+   p0r0 bold=False sz=31.5 col=1B2A47 font='Georgia'
+-- id=184 runs=1 paras=1
+   p0r0 bold=False sz=17.0 col=1B2A47 font='Arial'
+-- id=186 runs=2 paras=1
+   p0r0 bold=True sz=16.0 col=1B2A47 font='Arial'
+   p0r1 bold=False sz=16.0 col=1B2A47 font='Arial'
+-- id=187 runs=1 paras=1
+   p0r0 bold=True sz=22.0 col=1B2A47 font='Courier New'
+-- id=188 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=189 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=190 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=191 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=192 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=193 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=194 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=195 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=196 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=197 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=198 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=199 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=202 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 8 ===
+-- id=210 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=211 runs=1 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+-- id=212 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Arial'
+-- id=214 runs=1 paras=1
+   p0r0 bold=False sz=45.0 col=2D6A4D font='Georgia'
+-- id=215 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=216 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Arial'
+-- id=217 runs=1 paras=1
+   p0r0 bold=False sz=17.0 col=3B4A66 font='Arial'
+-- id=219 runs=1 paras=1
+   p0r0 bold=False sz=45.0 col=2D6A4D font='Georgia'
+-- id=220 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=221 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Arial'
+-- id=222 runs=1 paras=1
+   p0r0 bold=False sz=17.0 col=3B4A66 font='Arial'
+-- id=224 runs=1 paras=1
+   p0r0 bold=False sz=45.0 col=2D6A4D font='Georgia'
+-- id=225 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Courier New'
+-- id=226 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Arial'
+-- id=227 runs=1 paras=1
+   p0r0 bold=False sz=17.0 col=3B4A66 font='Arial'
+-- id=230 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 9 ===
+-- id=238 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=2D6A4D font='Courier New'
+-- id=239 runs=2 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+   p0r1 bold=False sz=40.5 col=5A6680 font='Georgia'
+-- id=240 runs=1 paras=1
+   p0r0 bold=False sz=19.5 col=1B2A47 font='Georgia'
+-- id=242 runs=1 paras=1
+   p0r0 bold=False sz=51.0 col=2D6A4D font='Georgia'
+-- id=243 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Courier New'
+-- id=245 runs=1 paras=1
+   p0r0 bold=False sz=51.0 col=2D6A4D font='Georgia'
+-- id=246 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Courier New'
+-- id=248 runs=1 paras=1
+   p0r0 bold=False sz=51.0 col=2D6A4D font='Georgia'
+-- id=249 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=5A6680 font='Courier New'
+-- id=250 runs=1 paras=1
+   p0r0 bold=False sz=18.0 col=2D6A4D font='Courier New'
+-- id=251 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=252 runs=1 paras=1
+   p0r0 bold=False sz=18.0 col=2D6A4D font='Courier New'
+-- id=253 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=254 runs=1 paras=1
+   p0r0 bold=False sz=18.0 col=2D6A4D font='Courier New'
+-- id=255 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=256 runs=1 paras=1
+   p0r0 bold=False sz=18.0 col=2D6A4D font='Courier New'
+-- id=257 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=3B4A66 font='Arial'
+-- id=260 runs=2 paras=1
+   p0r0 bold=True sz=17.22 col=2D6A4D font='Courier New'
+   p0r1 bold=False sz=17.22 col=1B2A47 font='Courier New'
+-- id=263 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
+=== SLIDE 10 ===
+-- id=271 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Courier New'
+-- id=272 runs=2 paras=1
+   p0r0 bold=False sz=40.5 col=1B2A47 font='Georgia'
+   p0r1 bold=False sz=40.5 col=1B2A47 font='Georgia'
+-- id=273 runs=1 paras=1
+   p0r0 bold=False sz=20.0 col=1B2A47 font='Courier New'
+-- id=274 runs=1 paras=1
+   p0r0 bold=False sz=22.5 col=1B2A47 font='Georgia'
+-- id=275 runs=1 paras=1
+   p0r0 bold=False sz=18.0 col=1B2A47 font='Courier New'
+-- id=277 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Arial'
+-- id=278 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=280 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Arial'
+-- id=281 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=283 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Arial'
+-- id=284 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=286 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Arial'
+-- id=287 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=288 runs=1 paras=1
+   p0r0 bold=True sz=17.0 col=1B2A47 font='Arial'
+-- id=289 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=291 runs=1 paras=1
+   p0r0 bold=False sz=15.0 col=1B2A47 font='Arial'
+-- id=292 runs=1 paras=1
+   p0r0 bold=False sz=22.5 col=1B2A47 font='Georgia'
+-- id=295 runs=1 paras=1
+   p0r0 bold=True sz=22.01 col=1B2A47 font='Courier New'
