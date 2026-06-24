@@ -52,11 +52,15 @@ def _read_undo_window(db):
 
 
 def _to_manual_review(db, execution_id, reason):
+    # C6: this is the safety-critical quarantine write — it must NEVER fail on length
+    # (a failed write would leave the execution un-quarantined). Degrade the reason
+    # explicitly (visible marker) so it always fits the status_reason CHECK(<=500).
+    from argus.queue import _bound_system_reason
     now = int(time.time())
     db.execute(
         "UPDATE pending_executions SET status='MANUAL_REVIEW', status_reason=?, updated_at=? "
         "WHERE execution_id=?",
-        (reason[:300], now, execution_id),
+        (_bound_system_reason(reason), now, execution_id),
     )
     db.commit()
 

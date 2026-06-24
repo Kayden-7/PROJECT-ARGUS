@@ -33,6 +33,35 @@ LOCKABLE_STATES = ("PENDING", "MANUAL_REVIEW", "MANUAL_REVIEW_TIMEOUT")
 # ambiguous-delivery double-send path that a cancel→reopen route would reopen.
 REOPENABLE_QUEUE_STATES = ("HELD", "MANUAL_REVIEW_TIMEOUT", "TRANSITION_LOCKED")
 
+# Control 6 — reason cap (≤500). status_reason has a CHECK(length<=500) backstop.
+REASON_MAX = 500
+
+
+def _validate_caller_reason(reason):
+    """C6: an OPERATOR-supplied reason is REJECTED (never truncated) when too long
+    or malformed — silent truncation would change the meaning of what they wrote.
+    Returns (clean_reason, error_code|None)."""
+    if not isinstance(reason, str):
+        return None, "INVALID_REASON"
+    if "\x00" in reason:          # embedded NUL can mislead len() vs SQLite length()
+        return None, "INVALID_REASON"
+    if len(reason) > REASON_MAX:
+        return None, "REJECTION_REASON_TOO_LONG"
+    return reason, None
+
+
+def _bound_system_reason(reason, limit=REASON_MAX):
+    """C6: a SYSTEM-generated reason must ALWAYS fit, because the queue/execution
+    MUST route (a hold can't be abandoned just because a diagnostic string is long).
+    So we degrade EXPLICITLY with a visible marker — intentional diagnostic loss,
+    not silent truncation — and never let the write fail on length."""
+    if not isinstance(reason, str):
+        return ""
+    if len(reason) <= limit:
+        return reason
+    dropped = len(reason) - (limit - 16)
+    return reason[:limit - 16].rstrip() + f"…[+{dropped} chars]"
+
 
 def _db():
     db = sqlite3.connect(DATABASE)
@@ -261,6 +290,11 @@ def approve(item_id: str) -> dict:
 
 
 def reject(item_id: str, reason: str = "Rejected by user") -> dict:
+    # C6: validate the operator reason BEFORE any state read/write — reject overlong
+    # (don't truncate), and never let it reach the DB CHECK as a generic error.
+    reason, rerr = _validate_caller_reason(reason)
+    if rerr:
+        return {"success": False, "error_code": rerr}
     try:
         db = _db()
         row = db.execute(
@@ -389,7 +423,7 @@ def to_manual_review(item_id: str, reason: str = "Routed to manual review") -> d
                    manual_review_started_at=?, updated_at=?, version=version+1,
                    status_reason=?
                WHERE id=? AND status=?""",
-            (now, now, (reason or "")[:500], item_id, current)
+            (now, now, _bound_system_reason(reason or ""), item_id, current)
         ).rowcount
         db.commit()
         db.close()

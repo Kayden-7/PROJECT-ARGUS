@@ -167,7 +167,13 @@ try:
     # Regression: reset must wipe the LIVE audit table (audit_events), not the
     # dead audit_log; must clear Phase 8 admission/queue tables; must reset the
     # hard-stop epoch; and must leave audit_events append-only again.
-    check('reset clears audit_events (the live audit trail)', db_count('audit_events') == 0)
+    # Part 7: reset restarts the hash chain with ONE genesis event
+    # (DEMO_RESET_COMPLETED) — so the prior chain is gone and exactly one row remains.
+    _ae = sqlite3.connect(DB_PATH); _ae.row_factory = sqlite3.Row
+    _ae_rows = _ae.execute("SELECT event_type FROM audit_events").fetchall(); _ae.close()
+    check('reset restarts audit_events with one genesis row', len(_ae_rows) == 1, got=len(_ae_rows))
+    check('genesis row is DEMO_RESET_COMPLETED',
+          _ae_rows and _ae_rows[0]["event_type"] == "DEMO_RESET_COMPLETED")
     check('reset clears proposal_dedup', db_count('proposal_dedup') == 0)
     check('reset clears rate_limits', db_count('rate_limits') == 0)
     check('reset clears queue_transition_attempts', db_count('queue_transition_attempts') == 0)

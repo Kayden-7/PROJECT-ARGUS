@@ -34,6 +34,7 @@ SUITES = [
     ('Phase 8 (4/7) -- Private Contacts',      'tests/test_phase_8_private_contacts.py'),
     ('Phase 8 (5/7) -- Queue Lifecycle C4+C7', 'tests/test_phase_8_queue_lifecycle.py'),
     ('Phase 8 (6/7) -- Exec Identity+Reopen',  'tests/test_phase_8_part6.py'),
+    ('Phase 8 (7/7) -- Reason Cap+Demo Reset', 'tests/test_phase_8_part7.py'),
 ]
 
 SUITE_SHORTCUTS = {

@@ -104,8 +104,15 @@ These were identified across 4 stress-test passes on the Gmail execution layer. 
 ### True exactly-once delivery / atomic Gmail+local state
 Currently: Gmail sits outside the SQLite transaction, so we can't make send + local commit atomic. We handle this by failing closed (crashed/ambiguous SENDING → MANUAL_REVIEW, never auto-resume). Production: a proper outbox pattern / distributed transaction coordinator, or a provider that supports idempotency keys.
 
-### Auto-resume of crashed SENDING jobs
-Currently: any crashed SENDING job goes to MANUAL_REVIEW — a human resolves it. Deferred: safe automatic resume requires proving the prior send request never crossed the Gmail boundary (owner liveness detection, request-boundary fencing). Hard problem; not worth it for single-user demo.
+### Auto-resume of crashed SENDING jobs — DONE (commit 55ea65e, Baldwin)
+Implemented: crash recovery no longer guesses. It checks draft_exists() — Gmail
+consumes a draft the instant it sends, so a still-present draft proves the send
+never went out (safe resume from DRAFT_READY, no double-send); a gone draft is a
+confirmed send (COMPLETED); only an inconclusive check (the read itself fails) or a
+crash with no draft on record falls back to MANUAL_REVIEW. Covered by
+test_executor_independent (all three branches) + Phase 5. The remaining residual
+risk (a draft removed by something OTHER than a send) doesn't occur in the
+single-user controlled flow where ARGUS owns the draft it created.
 
 ### Background worker / continuous reconciliation
 Currently: reconcile-on-read (runs on API calls). If nobody touches the app, nothing executes. Deferred: a real scheduled worker/heartbeat so execution is time-driven, not read-driven. Skipped because background threads on Flask/Replit are flaky and unneeded for a live demo.
@@ -156,7 +163,9 @@ A consumer provider not on the list could be added to TRUSTED_DOMAINS later. Con
 - **HMAC / external anchoring of the hash chain.** Current chain is local SHA-256: tamper-evident for retained entries, but a host admin who can replace the DB + recompute hashes is not stopped. An HMAC with a secret stored separately (or anchoring chain heads externally) raises the bar. Honestly framed in `/api/audit/verify` as "internally consistent," not immutable.
 - **Lifecycle-completeness checks.** Chain verification can't detect an *omitted* best-effort write (no event = no broken link). Material pre-execution writes fail closed, but full completeness would cross-check audit events against proposals/queue/executions/trust. Deferred.
 - **Config-change logging** (CONFIG_CHANGED) — policy/template/contact/trusted-domain edits aren't audited yet; replay can't show the exact config in force at decision time. Needs config-mutation endpoints first.
-- **Audit pagination** beyond the bounded limit, and a per-demo-run chain genesis on `/demo/reset` (currently the chain continues across resets).
+- **Audit pagination** beyond the bounded limit. (Per-demo-run chain genesis on
+  `/demo/reset` is now DONE — Phase 8 Part 7 writes a `DEMO_RESET_COMPLETED` genesis
+  event after each reset, so the chain restarts cleanly per demo run.)
 - **Scheduled monthly review reminder** — kept on-demand for the demo.
 
 ## Phase 8 Part 6 — Fence B (FAILED→queue HELD bridge) — deferred after stress test
