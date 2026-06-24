@@ -114,6 +114,31 @@ def create_app():
         return jsonify({"success": True, "engaged": result["engaged"],
                         "epoch": result["epoch"], "transitioned": result["transitioned"]}), 200
 
+    # ── Execution delay (Settings > Execution Delay) ───────────────────────────
+    @app.route('/api/system/execution-delay', methods=['GET'])
+    def execution_delay_get():
+        from argus import kernel
+        result = kernel.get_execution_delay()
+        if not result.get("success"):
+            return jsonify(result), 500
+        return jsonify(result), 200
+
+    @app.route('/api/system/execution-delay', methods=['POST'])
+    def execution_delay_set():
+        from argus import kernel
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        seconds = body.get("seconds")
+        if not isinstance(seconds, int) or isinstance(seconds, bool):
+            return jsonify({"success": False, "error_code": "INVALID_SECONDS",
+                            "detail": "seconds must be an integer"}), 400
+        result = kernel.set_execution_delay(seconds, updated_by="control")
+        if not result.get("success"):
+            return jsonify(result), 500
+        return jsonify(result), 200
+
     # ── Phase 2→3 connector ───────────────────────────────────────────────────
 
     def _audit_decision(correlation, body, decision):
@@ -380,7 +405,19 @@ def create_app():
 
     @app.route('/api/executions')
     def executions_list():
-        import sqlite3 as _sql, os as _os
+        # Reconcile-on-read (same pattern as GET /api/queue) — without this,
+        # nothing advances until something explicitly calls tick, which is
+        # why approved items used to sit invisible until a manual "Process
+        # now" click long after the delay had already elapsed.
+        from argus.queue import expire_stale
+        from argus.executor import reconcile
+        from argus.kernel import get_execution_delay
+        import sqlite3 as _sql, os as _os, json as _json
+        expire_stale()
+        try:
+            reconcile()
+        except Exception:
+            pass
         DB = _os.path.join(_os.path.dirname(__file__), 'instance', 'argus.db')
         db = _sql.connect(DB); db.row_factory = _sql.Row
         rows = db.execute(
@@ -388,8 +425,35 @@ def create_app():
             "message_id, status_reason, attempt_count, created_at, updated_at "
             "FROM pending_executions ORDER BY created_at DESC"
         ).fetchall()
+        executions = [dict(r) for r in rows]
+        promoted_approval_ids = {e["approval_id"] for e in executions if e["approval_id"]}
+
+        # Approved items not yet promoted (still inside the execution delay)
+        # have no pending_executions row at all — surface them as a synthetic
+        # SCHEDULED entry with a real countdown, instead of being invisible
+        # until promote_approved() finally picks them up.
+        delay = get_execution_delay()
+        undo_seconds = delay["seconds"] if delay.get("success") else 60
+        approved_rows = db.execute(
+            "SELECT id, proposal_json, approved_at, created_at FROM approval_queue WHERE status='APPROVED'"
+        ).fetchall()
+        for r in approved_rows:
+            if r["id"] in promoted_approval_ids:
+                continue
+            try:
+                action_type = _json.loads(r["proposal_json"]).get("action_type", "(unknown)")
+            except Exception:
+                action_type = "(unknown)"
+            executions.append({
+                "execution_id": None, "approval_id": r["id"], "action_type": action_type,
+                "status": "SCHEDULED", "draft_id": None, "message_id": None,
+                "status_reason": None, "attempt_count": 0,
+                "created_at": r["created_at"], "updated_at": r["approved_at"],
+                "execute_at": (r["approved_at"] or 0) + undo_seconds,
+            })
         db.close()
-        return jsonify([dict(r) for r in rows]), 200
+        executions.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
+        return jsonify(executions), 200
 
     # ── Phase 5 Part 3: Message templates ─────────────────────────────────────
 

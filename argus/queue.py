@@ -12,7 +12,7 @@ VALID_TRANSITIONS = {
     "APPROVED":      ["EXECUTED", "CANCELLED"],
 }
 
-DEFAULT_UNDO_WINDOW = 30
+DEFAULT_UNDO_WINDOW = 60  # floor — see kernel.MIN_EXECUTION_DELAY_SECONDS
 
 
 def _db():
@@ -26,9 +26,12 @@ def _read_undo_window(db):
         row = db.execute(
             "SELECT value FROM system_state WHERE key='UNDO_WINDOW_SECONDS'"
         ).fetchone()
-        return int(row["value"]) if row else DEFAULT_UNDO_WINDOW
+        value = int(row["value"]) if row else DEFAULT_UNDO_WINDOW
     except Exception:
-        return DEFAULT_UNDO_WINDOW
+        value = DEFAULT_UNDO_WINDOW
+    # Floor enforced on read too, not just on write — covers rows seeded by an
+    # older default (30s) before the 1-minute minimum existed.
+    return max(DEFAULT_UNDO_WINDOW, value)
 
 
 def _invalid_transition(requested, current):

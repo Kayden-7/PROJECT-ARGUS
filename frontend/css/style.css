@@ -437,6 +437,22 @@ a { color: var(--color-evergreen); }
 }
 .proposal-row-value { font-size: 15px; word-break: break-word; }
 
+.proposal-body-preview { padding: 10px 0 6px; }
+.proposal-body-preview .proposal-row-label { display: block; margin-bottom: 8px; }
+.proposal-body-text {
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  padding: var(--spacing-md);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 /* ── banners (error / info) ───────────────────────────────────────────── */
 .banner {
   display: flex;
@@ -910,12 +926,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .execution-status-badge.status-completed { background: var(--color-evergreen-soft); color: var(--color-evergreen); }
 .execution-status-badge.status-manual_review { background: var(--color-amber-soft); color: var(--color-amber); }
 .execution-status-badge.status-failed { background: var(--color-oxblood-soft); color: var(--color-oxblood); }
+.execution-status-badge.status-scheduled { background: var(--color-proposal-tint); color: var(--color-secondary-ink); }
 .execution-pipeline { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .pipeline-step { font-size: 11px; font-family: var(--font-mono); color: var(--color-hairline); }
 .pipeline-step.is-current { color: var(--color-evergreen); font-weight: 600; }
 .pipeline-step.is-done { color: var(--color-secondary-ink); }
 .pipeline-arrow { color: var(--color-hairline); font-size: 11px; }
 .execution-reassurance { font-size: 13px; color: var(--color-amber); margin-top: var(--spacing-sm); }
+.execution-countdown { font-family: var(--font-mono); font-size: 12px; color: var(--color-secondary-ink); margin-left: auto; }
+.execution-countdown.is-urgent { color: var(--color-oxblood); font-weight: 600; }
 .execution-meta { font-family: var(--font-mono); font-size: 12px; color: var(--color-secondary-ink); margin-top: var(--spacing-sm); }
 
 /* ── private contacts (Settings page) ────────────────────────────────── */

@@ -89,7 +89,10 @@
         <div class="proposal-row"><span class="proposal-row-label">Action</span><span class="proposal-row-value" id="proposal-action"></span></div>
         <div class="proposal-row" id="proposal-to-row"><span class="proposal-row-label">To</span><span class="proposal-row-value" id="proposal-to"></span></div>
         <div class="proposal-row" id="proposal-subject-row"><span class="proposal-row-label">Subject</span><span class="proposal-row-value" id="proposal-subject"></span></div>
-        <p class="proposal-disclaimer">ARGUS does not send. This is a proposal only.</p>
+        <div class="proposal-body-preview" id="proposal-body-row" hidden>
+          <span class="proposal-row-label">Email preview</span>
+          <div class="proposal-body-text" id="proposal-body"></div>
+        </div>
       </div>
 
       <div id="decision-card" class="card decision-card" hidden>
@@ -339,15 +342,16 @@
     <h2>Executions</h2>
 
     <section id="approval-queue-section" class="execution-section">
-      <h3>Approval Queue</h3>
-      <p class="section-description">Pending your decision. Review and approve actions before they execute. Approved actions move to execution below.</p>
+      <h3>Execution Queue</h3>
+      <p class="section-description">Pending your decision. Approve or reject before the action runs. Approving does not send it immediately — it executes after the delay below, giving you a window to change your mind.</p>
       <div id="queue-items"></div>
     </section>
 
     <section id="live-execution-section" class="execution-section">
       <h3>Live Execution</h3>
       <p class="section-description">Actions in progress. Watch the live pipeline as ARGUS sends approved actions. On any uncertainty, execution stops and asks — never a silent double-send or lost email.</p>
-      <button id="executions-tick-btn" class="btn-secondary" style="width:auto; margin: 0 0 var(--spacing-md);">Process now</button>
+      <button id="executions-tick-btn" class="btn-secondary" style="width:auto; margin: 0 0 var(--spacing-sm);">Check for updates</button>
+      <p class="proposal-hint" id="executions-tick-status" style="margin: 0 0 var(--spacing-md);"></p>
       <div id="execution-list"></div>
     </section>
   </div>
@@ -402,7 +406,8 @@
         <input type="range" id="execution-delay-slider" min="1" max="4" value="4">
         <span id="execution-delay-display">4 minutes</span>
       </div>
-      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Preference saved locally for now — the backend enforcement of this delay arrives in Phase 8 Part 5.</p>
+      <p class="proposal-hint" id="execution-delay-status" style="margin-top: var(--spacing-sm);"></p>
+      <p class="proposal-hint" style="margin-top: var(--spacing-sm);">Enforced by the server — 1 minute is the floor; an approved action will never execute sooner than that, no matter what's sent to the API.</p>
     </div>
 
     <div class="card">

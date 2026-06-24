@@ -38,13 +38,17 @@ def _db():
 
 
 def _read_undo_window(db):
+    from argus.kernel import MIN_EXECUTION_DELAY_SECONDS
     try:
         row = db.execute(
             "SELECT value FROM system_state WHERE key='UNDO_WINDOW_SECONDS'"
         ).fetchone()
-        return int(row["value"]) if row else 30
+        value = int(row["value"]) if row else MIN_EXECUTION_DELAY_SECONDS
     except Exception:
-        return 30
+        value = MIN_EXECUTION_DELAY_SECONDS
+    # Floor enforced on read too, not just on write — covers rows seeded by an
+    # older default (30s) before the 1-minute minimum existed.
+    return max(MIN_EXECUTION_DELAY_SECONDS, value)
 
 
 def _to_manual_review(db, execution_id, reason):
@@ -267,9 +271,50 @@ def _advance_draft_action(db, row):
         return
 
     if status == "SENDING":
-        # Recovery sees SENDING => we crashed mid-send. Never auto-resume.
-        _to_manual_review(db, execution_id,
-                          "Crashed during send — outcome unknown. Verify in Gmail Sent folder.")
+        # Recovery sees SENDING => the previous pass crashed (or was simply
+        # interrupted) somewhere between calling drafts.send and writing
+        # COMPLETED. We don't have to GUESS what happened — Gmail consumes a
+        # draft the instant it sends, so a read-only drafts.get tells us for
+        # certain: gone => it sent (mark COMPLETED, no false "crashed" alarm);
+        # still there => it never sent (safe to resume from DRAFT_READY,
+        # never a double-send since nothing went out). Only a genuinely
+        # inconclusive check (the read itself fails) falls back to manual
+        # review — never assumed, only confirmed.
+        if not row["draft_id"]:
+            _to_manual_review(db, execution_id,
+                              "Crashed during send with no draft on record — outcome unknown. "
+                              "Verify in Gmail Sent folder.")
+            return
+        from argus import gmail_client
+        try:
+            still_drafted = gmail_client.draft_exists(row["draft_id"])
+        except Exception as e:
+            _to_manual_review(db, execution_id,
+                              f"Crashed during send — could not verify outcome ({str(e)[:120]}). "
+                              f"Verify in Gmail Sent folder.")
+            return
+        if still_drafted:
+            # Never sent — safe to retry. Release the claim so the atomic
+            # claim in DRAFT_READY can pick it back up on the next pass.
+            db.execute(
+                "UPDATE pending_executions SET status='DRAFT_READY', owner_token=NULL, "
+                "updated_at=? WHERE execution_id=? AND status='SENDING'",
+                (now, execution_id),
+            )
+            db.commit()
+            return
+        # Draft is gone — Gmail only consumes a draft by sending it. Confirmed
+        # sent, fenced by the owner_token recorded at claim time.
+        affected = db.execute(
+            "UPDATE pending_executions SET status='COMPLETED', updated_at=? "
+            "WHERE execution_id=? AND status='SENDING' AND owner_token=?",
+            (now, execution_id, row["owner_token"]),
+        ).rowcount
+        db.commit()
+        if affected == 1:
+            _mark_queue_executed(db, row["approval_id"], execution_id)
+            _write_execution_trust(execution_id, row["action_type"], "SUCCESS")
+            _audit_exec(row, "EXECUTION_RESOLVED", "COMPLETED")
         return
 
 
@@ -308,8 +353,23 @@ def _advance_direct_action(db, row):
         return
 
     if status == "SENDING":
-        _to_manual_review(db, execution_id,
-                          "Crashed during delete — outcome unknown. Verify in Gmail.")
+        # Unlike a send, trash is idempotent (re-trashing an already-trashed
+        # message is a no-op success) — safe to just retry rather than
+        # parking in manual review for something that isn't actually unknown.
+        try:
+            gmail_client.trash_message(ent.get("message_id", ""))
+        except Exception as e:
+            _to_manual_review(db, execution_id, f"Trash retry failed: {str(e)[:200]}")
+            return
+        affected = db.execute(
+            "UPDATE pending_executions SET status='COMPLETED', updated_at=? "
+            "WHERE execution_id=? AND status='SENDING' AND owner_token=?",
+            (now, execution_id, row["owner_token"]),
+        ).rowcount
+        db.commit()
+        if affected == 1:
+            _mark_queue_executed(db, row["approval_id"], execution_id)
+            _write_execution_trust(execution_id, row["action_type"], "SUCCESS")
         return
 
 

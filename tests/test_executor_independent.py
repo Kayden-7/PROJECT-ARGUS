@@ -117,7 +117,7 @@ def init_executor_schema(db_path):
         );
         """
     )
-    conn.execute("INSERT INTO system_state VALUES ('UNDO_WINDOW_SECONDS', '30')")
+    conn.execute("INSERT INTO system_state VALUES ('UNDO_WINDOW_SECONDS', '60')")
     conn.execute("INSERT INTO system_state VALUES ('OVERALL_TRUST_MODIFIER', '1.0')")
     conn.execute("INSERT INTO system_state VALUES ('ACTIVE_PROFILE', 'Balanced')")
     conn.execute(
@@ -190,16 +190,22 @@ def insert_approved(db_path, approval_id="approval-1", proposal=None, approved_s
     return approval_id
 
 
-def insert_pending(db_path, execution_id="exec-1", approval_id="approval-1", status="DRAFT_READY", draft_id="draft-1"):
+def insert_pending(db_path, execution_id="exec-1", approval_id="approval-1", status="DRAFT_READY",
+                    draft_id="draft-1", owner_token=None):
     now = int(time.time())
     proposal = base_proposal()
+    # Production rows always carry an owner_token by the time they reach
+    # SENDING (set atomically by the DRAFT_READY claim) — default one here so
+    # tests that inject a SENDING row directly match that real invariant.
+    if owner_token is None and status == "SENDING":
+        owner_token = f"token-{execution_id}"
     with connect(db_path) as conn:
         conn.execute(
             """
             INSERT INTO pending_executions
                 (execution_id, approval_id, action_type, payload_json, status, draft_id,
-                 attempt_count, approved_at, execute_after, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 owner_token, attempt_count, approved_at, execute_after, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 execution_id,
@@ -208,6 +214,7 @@ def insert_pending(db_path, execution_id="exec-1", approval_id="approval-1", sta
                 json.dumps(proposal),
                 status,
                 draft_id,
+                owner_token,
                 1,
                 now - 60,
                 now - 30,
@@ -236,12 +243,15 @@ def queue_status(db_path, approval_id):
 
 
 class FakeGmail:
-    def __init__(self, send_raises=False):
+    def __init__(self, send_raises=False, draft_exists_returns=True, draft_exists_raises=False):
         self.created = []
         self.sent = []
         self.trashed = []
         self.recipients = {}
         self.send_raises = send_raises
+        self.draft_exists_returns = draft_exists_returns
+        self.draft_exists_raises = draft_exists_raises
+        self.draft_exists_calls = []
 
     def get_history_id(self):
         return "history-1"
@@ -276,6 +286,12 @@ class FakeGmail:
     def classify_gmail_error(self, phase, exc):
         return {"class": "TEST_ERROR", "sub_reason": type(exc).__name__}
 
+    def draft_exists(self, draft_id):
+        self.draft_exists_calls.append(draft_id)
+        if self.draft_exists_raises:
+            raise RuntimeError("simulated drafts.get failure")
+        return self.draft_exists_returns
+
 
 @contextlib.contextmanager
 def patched_gmail(fake):
@@ -288,6 +304,7 @@ def patched_gmail(fake):
         send_draft=fake.send_draft,
         trash_message=fake.trash_message,
         classify_gmail_error=fake.classify_gmail_error,
+        draft_exists=fake.draft_exists,
     )
     sentinel = object()
     old_module = sys.modules.get("argus.gmail_client", sentinel)
@@ -343,8 +360,50 @@ def happy_path_advances_draft_pending_to_ready_to_completed_with_one_send():
 
 
 @test
-def sending_state_left_by_crash_moves_to_manual_review_and_is_never_resent():
-    with isolated_db() as db_path, patched_gmail(FakeGmail()) as fake:
+def sending_state_with_draft_gone_recovers_as_completed_without_resend():
+    # Recovery from a crash mid-send must not GUESS — it checks. If Gmail has
+    # already consumed the draft (gone == sent), that's a confirmed success,
+    # not an unverified "crash": no false alarm, no re-send, trust written once.
+    with isolated_db() as db_path, patched_gmail(FakeGmail(draft_exists_returns=False)) as fake:
+        # approved_seconds_ago=0 keeps this APPROVED row's undo window from
+        # having elapsed yet, so promote_approved() won't ALSO create a second,
+        # unrelated pending_execution for it during this same reconcile() call.
+        approval_id = insert_approved(db_path, approval_id="approval-recovered", approved_seconds_ago=0)
+        insert_pending(db_path, approval_id=approval_id, status="SENDING", draft_id="draft-already-sent")
+        executor.reconcile()
+        row = pending_rows(db_path)[0]
+        require_equal(row["status"], "COMPLETED")
+        require_equal(fake.draft_exists_calls, ["draft-already-sent"])
+        require_equal(len(fake.sent), 0, "must never call send_draft during recovery")
+        require_equal(count_rows(db_path, "trust_events"), 1, "confirmed send should write exactly one trust event")
+        require_equal(queue_status(db_path, approval_id)["status"], "EXECUTED")
+        executor.reconcile()
+        require_equal(count_rows(db_path, "trust_events"), 1, "recovered completion must not double-write trust")
+
+
+@test
+def sending_state_with_draft_still_present_resumes_and_completes_normally():
+    # If the draft is still there, it genuinely never sent — safe to resume
+    # from DRAFT_READY (never a double-send, since nothing went out yet).
+    with isolated_db() as db_path, patched_gmail(FakeGmail(draft_exists_returns=True)) as fake:
+        fake.recipients["draft-never-sent"] = {"to": ["person@example.net"], "cc": [], "bcc": []}
+        insert_pending(db_path, status="SENDING", draft_id="draft-never-sent")
+        executor.reconcile()
+        row = pending_rows(db_path)[0]
+        require_equal(row["status"], "DRAFT_READY", "must resume, not park in manual review")
+        require_equal(len(fake.sent), 0, "must not send during the recovery check itself")
+
+        executor.reconcile()
+        row = pending_rows(db_path)[0]
+        require_equal(row["status"], "COMPLETED")
+        require_equal(len(fake.sent), 1, "the resumed row should send exactly once")
+
+
+@test
+def sending_state_verification_failure_falls_back_to_manual_review():
+    # If we can't even confirm one way or the other (the read itself fails),
+    # fail closed exactly as before — never assumed, never resent.
+    with isolated_db() as db_path, patched_gmail(FakeGmail(draft_exists_raises=True)) as fake:
         execution_id = insert_pending(db_path, status="SENDING", draft_id="draft-crashed")
         executor.reconcile()
         row = pending_rows(db_path)[0]

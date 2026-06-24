@@ -277,7 +277,7 @@ def list_messages(max_results=20):
         results = service.users().messages().list(
             userId='me',
             maxResults=min(max(1, max_results), 50),
-            q=''
+            labelIds=['INBOX']
         ).execute()
         message_ids = [m['id'] for m in results.get('messages', [])]
 

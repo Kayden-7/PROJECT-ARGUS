@@ -102,7 +102,7 @@ try:
     check('SYSTEM_HARD_STOP = 0',          sv('SYSTEM_HARD_STOP')        == '0')
     check('ACTIVE_PROFILE = Balanced',     sv('ACTIVE_PROFILE')          == 'Balanced')
     check('OVERALL_TRUST_MODIFIER = 1.0',  sv('OVERALL_TRUST_MODIFIER')  == '1.0')
-    check('UNDO_WINDOW_SECONDS = 30',      sv('UNDO_WINDOW_SECONDS')     == '30')
+    check('UNDO_WINDOW_SECONDS = 60',      sv('UNDO_WINDOW_SECONDS')     == '60')
 
     sec('Database Seeds — permission_profiles')
     profs = {r[0]: r[1] for r in db.execute("SELECT profile_name, active FROM permission_profiles").fetchall()}
