@@ -175,6 +175,25 @@ def _advance_draft_action(db, row):
     now = int(time.time())
     ent = _entities(row)
 
+    # CONTROL 3 executor preflight: a contact added AFTER approval must still
+    # block a not-yet-sent action. Honest boundary — once status is SENDING the
+    # request may already be dispatched, so that state is never retro-blocked.
+    if status in ("DRAFT_PENDING", "DRAFT_READY"):
+        from argus import private_contacts as _pc
+        if _pc.is_private(ent.get("recipient")):
+            _to_manual_review(db, execution_id,
+                              "EXECUTOR_BLOCKED_PRIVATE_CONTACT: recipient is a protected contact")
+            try:
+                from argus.audit import safe_record
+                safe_record("EXECUTOR_BLOCKED_PRIVATE_CONTACT", correlation_id=row["approval_id"],
+                            action_type=row["action_type"], outcome="BLOCKED",
+                            reason="EXECUTOR_BLOCKED_PRIVATE_CONTACT",
+                            payload={"execution_id": execution_id,
+                                     "contact": _pc._redact(_pc._normalize(ent.get("recipient")))})
+            except Exception:
+                pass
+            return
+
     if status == "DRAFT_PENDING":
         # Orphan-draft guard: if we already attempted once and still have no
         # draft_id, a draft may have been created but not recorded -> fail closed.

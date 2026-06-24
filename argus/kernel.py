@@ -151,6 +151,84 @@ def set_hard_stop(engaged: bool, updated_by: str = "control", reason=None) -> di
         conn.close()
 
 
+VALID_PROFILES = ("Strict", "Balanced", "Autonomous")
+
+
+def get_active_profile() -> dict:
+    """Active policy profile + its trust ceiling. Fails closed to Balanced (the
+    safe middle) if the row is missing or unreadable."""
+    from config import PROFILE_TRUST_CEILINGS
+    try:
+        conn = sqlite3.connect(DATABASE)
+        row = conn.execute("SELECT value FROM system_state WHERE key='ACTIVE_PROFILE'").fetchone()
+        conn.close()
+        profile = row[0] if row and row[0] in VALID_PROFILES else "Balanced"
+    except Exception:
+        profile = "Balanced"
+    return {"profile": profile, "ceiling": PROFILE_TRUST_CEILINGS.get(profile, 85.0)}
+
+
+def set_active_profile(profile, updated_by="control", reason=None) -> dict:
+    """Switch the active policy profile atomically with its audit event. The
+    policy engine (threshold) and trust ledger (ceiling) both read ACTIVE_PROFILE
+    live, so the switch takes effect on the next evaluation. Idempotent: a no-op
+    switch makes no write and no audit event."""
+    from config import PROFILE_TRUST_CEILINGS
+    if profile not in VALID_PROFILES:
+        return {"success": False, "error_code": "INVALID_PROFILE"}
+    if reason is not None:
+        if not isinstance(reason, str):
+            return {"success": False, "error_code": "INVALID_REASON"}
+        if len(reason) > REASON_MAX:
+            return {"success": False, "error_code": "REJECTION_REASON_TOO_LONG"}
+
+    conn = sqlite3.connect(DATABASE, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            return {"success": False, "error_code": "BUSY", "retryable": True}
+
+        row = conn.execute("SELECT value FROM system_state WHERE key='ACTIVE_PROFILE'").fetchone()
+        current = row["value"] if row else None
+        ceiling = PROFILE_TRUST_CEILINGS.get(profile, 85.0)
+
+        if current == profile:  # idempotent: no write, no audit event
+            conn.execute("ROLLBACK")
+            return {"success": True, "profile": profile, "ceiling": ceiling, "transitioned": False}
+
+        now = int(time.time())
+        cur = conn.execute(
+            "UPDATE system_state SET value=?, updated_at=?, updated_by=?, reason=? "
+            "WHERE key='ACTIVE_PROFILE'", (profile, now, updated_by, reason))
+        if cur.rowcount != 1:
+            conn.execute("ROLLBACK")
+            return {"success": False, "error_code": "STATE_WRITE_FAILED"}
+
+        from argus import audit
+        rec = audit.record(
+            "POLICY_PROFILE_CHANGED", action_type="system.policy_profile",
+            outcome="CHANGED", reason=reason,
+            payload={"old": current, "new": profile, "ceiling": ceiling,
+                     "updated_by": updated_by}, db=conn)
+        if not rec.get("recorded"):
+            conn.execute("ROLLBACK")
+            return {"success": False, "error_code": "AUDIT_WRITE_FAILED", "detail": rec.get("error")}
+
+        conn.execute("COMMIT")
+        return {"success": True, "profile": profile, "ceiling": ceiling, "transitioned": True}
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return {"success": False, "error_code": "PROFILE_FAILED", "detail": str(e)[:120]}
+    finally:
+        conn.close()
+
+
 def kernel_entry(proposal: dict) -> dict:
     if is_hard_stop():
         return {
