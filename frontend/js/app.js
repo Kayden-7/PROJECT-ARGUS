@@ -28,6 +28,26 @@ const ALL_ACTIONS = [
 
 let countdownHandle = null;
 
+// Tracks which queue item the workbench's Policy Decision + Authorisation
+// widgets currently belong to. Approving/rejecting the SAME item from the
+// Executions page must clear them too — they're stale the moment that item
+// is no longer awaiting a decision — but a different item being approved/
+// rejected from elsewhere shouldn't touch a workbench card showing something
+// else entirely. The two pages render different DOM, but every page's DOM
+// exists at once (state.js's render() just toggles which is .active), so a
+// queue-page action really can leave a workbench-page card stale otherwise.
+let workbenchAuthQueueId = null;
+
+function clearWorkbenchAuthorisationIfMatches(queueId) {
+  if (queueId !== workbenchAuthQueueId) return;
+  if (countdownHandle) { clearInterval(countdownHandle); countdownHandle = null; }
+  const slot = document.getElementById('authorisation-slot');
+  if (slot) slot.innerHTML = '';
+  const card = document.getElementById('decision-card');
+  if (card) card.hidden = true;
+  workbenchAuthQueueId = null;
+}
+
 const PAGES = ['login', 'workbench', 'audit', 'trust', 'templates', 'executions', 'settings'];
 
 // ── emergency stop ──────────────────────────────────────────────────────────
@@ -721,6 +741,7 @@ function formatCountdown(seconds) {
 }
 
 function renderAuthorisation(queueItem) {
+  workbenchAuthQueueId = queueItem.id;
   const slot = document.getElementById('authorisation-slot');
   slot.innerHTML = `
     <div id="authorisation" class="card">
@@ -760,14 +781,11 @@ function renderAuthorisation(queueItem) {
     btn.disabled = true;
     const result = await approveQueue(queueItem.id);
     if (result.ok && result.body.success) {
-      // Approved — this card's job is done. Stop the countdown, clear the
-      // policy decision and authorisation widgets (their job was deciding
-      // whether to ask; that's settled now), and keep only the AI Proposal
-      // visible. What happens next (the countdown to send, cancelling, the
-      // actual execution) lives on the Executions page from here on.
-      if (countdownHandle) { clearInterval(countdownHandle); countdownHandle = null; }
-      document.getElementById('authorisation-slot').innerHTML = '';
-      document.getElementById('decision-card').hidden = true;
+      // Approved — this card's job is done (their job was deciding whether to
+      // ask; that's settled now). Keep only the AI Proposal visible. What
+      // happens next (the countdown to send, cancelling, the actual
+      // execution) lives on the Executions page from here on.
+      clearWorkbenchAuthorisationIfMatches(queueItem.id);
       setProposalStatus('Approved — see the Execution Queue page for its countdown and status.');
       refreshExecutionsPage();
     } else {
@@ -787,8 +805,7 @@ function renderAuthorisation(queueItem) {
     errorEl.hidden = true;
     const result = await rejectQueue(queueItem.id, reason);
     if (result.ok && result.body.success) {
-      clearInterval(countdownHandle);
-      document.getElementById('authorisation-slot').innerHTML = '';
+      clearWorkbenchAuthorisationIfMatches(queueItem.id);
       setProposalStatus('Rejected.');
       loadQueue();
     } else {
@@ -916,6 +933,11 @@ function renderQueueItems(items, scheduledItems = []) {
         // the configured delay (see Settings > Execution Delay). The Live
         // Execution section below picks it up once that delay elapses.
         statusLine.textContent = 'Approved — will execute after the delay window.';
+        // If the Workbench's Policy Decision / Authorisation cards are still
+        // showing THIS same item (approved from here instead of from there),
+        // they're now stale — clear them too, or going back to Workbench
+        // shows a decision that's already been acted on.
+        clearWorkbenchAuthorisationIfMatches(item.id);
         refreshExecutionsPage();
       });
 
@@ -927,7 +949,7 @@ function renderQueueItems(items, scheduledItems = []) {
         reasonError.hidden = true;
         confirmReject.disabled = true;
         const result = await rejectQueue(item.id, reason);
-        if (result.ok && result.body.success) { loadQueue(); }
+        if (result.ok && result.body.success) { clearWorkbenchAuthorisationIfMatches(item.id); loadQueue(); }
         else { statusLine.textContent = (result.body && result.body.detail) || 'Rejection failed.'; confirmReject.disabled = false; }
       });
 
