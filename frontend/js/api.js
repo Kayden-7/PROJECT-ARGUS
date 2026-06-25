@@ -216,6 +216,19 @@ export async function tickExecutions() {
   return request('/api/executions/tick', { method: 'POST' });
 }
 
+// POST /api/executions/<id>/resolve { decision:"retry"|"discard", reason? }
+// Operator decision on an execution paused in MANUAL_REVIEW.
+//   retry   -> re-run it (nothing was sent, safe to re-attempt) -> { success, decision }
+//   discard -> abandon it (terminal) -> { success, decision }
+// Same loopback-only control auth as reopen/emergency-stop.
+export async function resolveExecution(executionId, decision, reason = '') {
+  return request(`/api/executions/${encodeURIComponent(executionId)}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(reason ? { decision, reason } : { decision }),
+  });
+}
+
 // GET /health
 export async function fetchHealth() {
   return request('/health');

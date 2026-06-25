@@ -12,7 +12,7 @@ import {
   fetchExecutionDelay, setExecutionDelay,
   fetchActiveProfile, setActiveProfile,
   fetchPrivateContacts, addPrivateContact, removePrivateContact,
-  reopenQueue,
+  reopenQueue, resolveExecution,
 } from './api.js';
 
 // Mirrors config.py ALL_ACTIONS — kept in sync manually, same approach used
@@ -1917,6 +1917,7 @@ const PIPELINE_LABELS = { DRAFT_PENDING: 'Draft', DRAFT_READY: 'Ready', SENDING:
 const TERMINAL_PIPELINE_LABELS = {
   MANUAL_REVIEW: 'Paused for review',
   FAILED: 'Failed',
+  DISMISSED: 'Dismissed',
   HELD: 'Held — emergency stop',
   SUPERSEDED: 'Superseded',
 };
@@ -1964,18 +1965,73 @@ function renderExecutions(list) {
     action.textContent = ex.action_type;
     head.appendChild(action);
 
+    // An operator-dismissed execution is stored as FAILED (the only free
+    // terminal slot) but is a deliberate choice, not an error — render it as
+    // "Dismissed" so it never looks like something broke.
+    const dismissed = ex.status === 'FAILED'
+      && (ex.status_reason || '').startsWith('Dismissed by operator');
+    const displayStatus = dismissed ? 'DISMISSED' : ex.status;
+
     const badge = document.createElement('span');
-    badge.className = `execution-status-badge status-${ex.status.toLowerCase()}`;
-    badge.textContent = ex.status.replace('_', ' ');
+    badge.className = `execution-status-badge status-${(dismissed ? 'superseded' : ex.status).toLowerCase()}`;
+    badge.textContent = displayStatus.replace('_', ' ');
     head.appendChild(badge);
-    head.appendChild(renderPipeline(ex.status));
+    head.appendChild(renderPipeline(dismissed ? 'DISMISSED' : ex.status));
     card.appendChild(head);
+
+    if (dismissed) {
+      const note = document.createElement('p');
+      note.className = 'execution-reassurance';
+      note.style.color = 'var(--color-secondary-ink)';
+      note.textContent = `${ex.status_reason} Nothing was sent — you chose not to proceed with this one.`;
+      card.appendChild(note);
+    }
 
     if (ex.status === 'MANUAL_REVIEW') {
       const reassure = document.createElement('p');
       reassure.className = 'execution-reassurance';
       reassure.textContent = `${ex.status_reason || 'Paused on uncertainty.'} ARGUS stops and asks rather than risk a silent double-send or a lost email — this execution is waiting on a human decision, nothing has been lost.`;
       card.appendChild(reassure);
+
+      // Operator decision: re-attempt (nothing was sent, safe to retry) or
+      // dismiss (abandon it). Both hit POST /api/executions/<id>/resolve.
+      if (ex.execution_id) {
+        const controls = document.createElement('div');
+        controls.className = 'queue-item-controls';
+
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'btn-primary';
+        retryBtn.textContent = 'Approve & retry';
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.className = 'btn-secondary';
+        dismissBtn.textContent = 'Dismiss';
+
+        const statusLine = document.createElement('p');
+        statusLine.className = 'queue-item-status';
+
+        const resolve = async (decision, verb) => {
+          retryBtn.disabled = true; dismissBtn.disabled = true;
+          statusLine.textContent = `${verb}…`;
+          const result = await resolveExecution(ex.execution_id, decision);
+          if (result.ok && result.body && result.body.success) {
+            statusLine.textContent = decision === 'retry'
+              ? 'Re-attempting…' : 'Dismissed.';
+            refreshExecutionsPage();
+          } else {
+            statusLine.textContent = (result.body && result.body.detail) || `${verb} failed.`;
+            retryBtn.disabled = false; dismissBtn.disabled = false;
+          }
+        };
+
+        retryBtn.addEventListener('click', () => resolve('retry', 'Retrying'));
+        dismissBtn.addEventListener('click', () => resolve('discard', 'Dismissing'));
+
+        controls.appendChild(retryBtn);
+        controls.appendChild(dismissBtn);
+        card.appendChild(controls);
+        card.appendChild(statusLine);
+      }
     }
 
     if (ex.status === 'HELD') {

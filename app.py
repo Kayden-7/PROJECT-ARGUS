@@ -546,6 +546,27 @@ def create_app():
         executions.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
         return jsonify(executions), 200
 
+    @app.route('/api/executions/<execution_id>/resolve', methods=['POST'])
+    def execution_resolve(execution_id):
+        # Operator decision on an execution paused in MANUAL_REVIEW:
+        #   decision='retry'   -> re-run it (nothing was sent, safe to re-attempt)
+        #   decision='discard' -> abandon it (terminal, audited)
+        from argus.executor import resolve_manual_review
+        if not _control_authorized(request):
+            return jsonify({"success": False, "error_code": "UNAUTHORIZED",
+                            "detail": "control-plane access denied"}), 403
+        body = request.get_json(silent=True) or {}
+        decision = (body.get("decision") or "").strip().lower()
+        result = resolve_manual_review(execution_id, decision,
+                                       reason=body.get("reason", ""), actor="control")
+        if not result.get("success"):
+            code = result.get("error_code", "DB_ERROR")
+            http = (404 if code == "NOT_FOUND"
+                    else 400 if code == "INVALID_DECISION"
+                    else 409 if code == "NOT_IN_REVIEW" else 500)
+            return jsonify(result), http
+        return jsonify(result), 200
+
     # ── Phase 5 Part 3: Message templates ─────────────────────────────────────
 
     @app.route('/api/templates')

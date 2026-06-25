@@ -272,10 +272,17 @@ def _advance_draft_action(db, row):
             return  # superseded, held, or already claimed -> not ours to advance
         try:
             history_id = gmail_client.get_history_id()
+            subject = ent.get("subject", "")
+            body = ent.get("body", "")
+            # A forward carries no drafted body — pull the source email's content
+            # and build a proper "Fwd:" message, else Gmail sends a blank email.
+            if row["action_type"] == "email.forward":
+                src = gmail_client.get_message_full(ent.get("email_id"))
+                subject, body = gmail_client.build_forward_content(src)
             draft_id = gmail_client.create_draft(
                 to=ent.get("recipient", ""),
-                subject=ent.get("subject", ""),
-                body=ent.get("body", ""),
+                subject=subject,
+                body=body,
                 thread_id=ent.get("thread_id"),
                 in_reply_to=ent.get("in_reply_to"),
             )
@@ -424,7 +431,7 @@ def _advance_direct_action(db, row):
         if affected != 1:
             return
         try:
-            gmail_client.trash_message(ent.get("message_id", ""))
+            gmail_client.trash_message(ent.get("email_id") or ent.get("message_id", ""))
         except Exception as e:
             _to_manual_review(db, execution_id, f"Trash failed: {str(e)[:200]}")
             return
@@ -444,7 +451,7 @@ def _advance_direct_action(db, row):
         # message is a no-op success) — safe to just retry rather than
         # parking in manual review for something that isn't actually unknown.
         try:
-            gmail_client.trash_message(ent.get("message_id", ""))
+            gmail_client.trash_message(ent.get("email_id") or ent.get("message_id", ""))
         except Exception as e:
             _to_manual_review(db, execution_id, f"Trash retry failed: {str(e)[:200]}")
             return
@@ -470,6 +477,75 @@ def _mark_queue_executed(db, approval_id, execution_id):
         (execution_id, now, approval_id),
     )
     db.commit()
+
+
+# ── Manual-review resolution (operator decision on a paused execution) ───────
+
+# A MANUAL_REVIEW execution fail-closed BEFORE completing: for a draft action a
+# still-present draft proves nothing was sent, and trash (direct action) is
+# idempotent — so the operator can safely RETRY (re-run) or DISCARD (abandon).
+# Both decisions are audited. DRAFT_PENDING is the entry status for BOTH the
+# draft and the direct flows, so a retry restarts cleanly from the top.
+def resolve_manual_review(execution_id, decision, reason="", actor="control"):
+    """Operator resolves an execution stuck in MANUAL_REVIEW.
+
+    decision='retry'   -> reset to DRAFT_PENDING and reconcile (re-attempt now).
+    decision='discard' -> terminal DISCARDED; the linked approval is closed too.
+    Only acts on a MANUAL_REVIEW row, so a double-click is a safe no-op.
+    """
+    if decision not in ("retry", "discard"):
+        return {"success": False, "error_code": "INVALID_DECISION"}
+    from argus.queue import _bound_system_reason
+    db = _db()
+    try:
+        row = db.execute(
+            "SELECT * FROM pending_executions WHERE execution_id=?",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            return {"success": False, "error_code": "NOT_FOUND"}
+        if row["status"] != "MANUAL_REVIEW":
+            return {"success": False, "error_code": "NOT_IN_REVIEW",
+                    "detail": f"Execution is {row['status']}, not MANUAL_REVIEW."}
+        now = int(time.time())
+        if decision == "retry":
+            db.execute(
+                "UPDATE pending_executions SET status='DRAFT_PENDING', owner_token=NULL, "
+                "status_reason=NULL, updated_at=? WHERE execution_id=? AND status='MANUAL_REVIEW'",
+                (now, execution_id),
+            )
+            db.commit()
+            outcome = "RETRY"
+        else:  # discard -> terminal FAILED (the only free terminal slot in the
+            # status CHECK; the frontend renders an operator-discarded FAILED as
+            # "Dismissed" via its DISCARD_MARKER reason prefix, not as an error).
+            db.execute(
+                "UPDATE pending_executions SET status='FAILED', owner_token=NULL, "
+                "status_reason=?, updated_at=? WHERE execution_id=? AND status='MANUAL_REVIEW'",
+                (_bound_system_reason("Dismissed by operator" + (f": {reason}" if reason else "")),
+                 now, execution_id),
+            )
+            if row["approval_id"]:
+                db.execute(
+                    "UPDATE approval_queue SET status='CANCELLED', updated_at=? "
+                    "WHERE id=? AND status='APPROVED'",
+                    (now, row["approval_id"]),
+                )
+            db.commit()
+            outcome = "DISCARDED"
+        try:
+            from argus.audit import safe_record
+            safe_record("EXECUTION_REVIEW_RESOLVED", correlation_id=row["approval_id"],
+                        action_type=row["action_type"], outcome=outcome,
+                        reason=(reason or "")[:200],
+                        payload={"execution_id": execution_id, "decision": decision})
+        except Exception:
+            pass
+    finally:
+        db.close()
+    if decision == "retry":
+        reconcile()  # drive the pipeline forward so the UI reflects the re-attempt
+    return {"success": True, "decision": decision, "execution_id": execution_id}
 
 
 # ── Reconcile (runs on API reads) ────────────────────────────────────────────

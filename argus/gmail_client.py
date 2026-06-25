@@ -336,3 +336,91 @@ def get_message_metadata(message_id):
         raise RuntimeError(f"Cannot access message {message_id}: {str(e)[:100]}")
     except Exception as e:
         raise RuntimeError(f"Failed to fetch message metadata: {str(e)[:100]}")
+
+
+def _extract_plain_body(payload):
+    """Walk a Gmail message payload and return its plain-text body.
+
+    Prefers text/plain; falls back to a tag-stripped text/html part so a
+    forward is never blank just because the source was HTML-only.
+    """
+    def _decode(data):
+        if not data:
+            return ""
+        return base64.urlsafe_b64decode(data.encode()).decode("utf-8", "replace")
+
+    plain, htmltext = "", ""
+
+    def _walk(part):
+        nonlocal plain, htmltext
+        mime = part.get("mimeType", "")
+        body = part.get("body", {})
+        if mime == "text/plain" and body.get("data"):
+            plain += _decode(body["data"])
+        elif mime == "text/html" and body.get("data"):
+            htmltext += _decode(body["data"])
+        for sub in part.get("parts", []) or []:
+            _walk(sub)
+
+    _walk(payload or {})
+    if plain.strip():
+        return plain.strip()
+    if htmltext.strip():
+        # Cheap HTML → text so an HTML-only email still forwards readable content.
+        import re
+        text = re.sub(r"(?is)<(script|style).*?</\1>", "", htmltext)
+        text = re.sub(r"(?is)<br\s*/?>", "\n", text)
+        text = re.sub(r"(?is)</p>", "\n\n", text)
+        text = re.sub(r"(?s)<[^>]+>", "", text)
+        return html.unescape(text).strip()
+    return ""
+
+
+def get_message_full(message_id):
+    """Fetch a message's headers + plain-text body, for building a forward.
+
+    Returns {id, subject, sender, date, body}. Raises RuntimeError on failure
+    so the executor fails closed to MANUAL_REVIEW rather than sending a blank.
+    """
+    try:
+        service = get_service()
+        msg = service.users().messages().get(
+            userId='me', id=message_id, format='full'
+        ).execute()
+        headers = {h['name']: h['value']
+                   for h in msg.get('payload', {}).get('headers', [])}
+        body = _extract_plain_body(msg.get('payload', {}))
+        if not body:
+            body = html.unescape(msg.get('snippet', ''))
+        return {
+            'id': message_id,
+            'subject': html.unescape(headers.get('Subject', '(No subject)')),
+            'sender': headers.get('From', '(Unknown)'),
+            'date': headers.get('Date', ''),
+            'body': body,
+        }
+    except HttpError as e:
+        if e.resp.status == 404:
+            raise RuntimeError(f"Message {message_id} not found")
+        raise RuntimeError(f"Cannot access message {message_id}: {str(e)[:100]}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch message body: {str(e)[:100]}")
+
+
+def build_forward_content(src):
+    """Build the (subject, body) for a forward from a get_message_full() dict.
+
+    Mirrors the standard Gmail forward layout so the recipient sees the quoted
+    original instead of an empty message.
+    """
+    subject = src.get('subject', '') or '(No subject)'
+    if not subject.lower().startswith('fwd:'):
+        subject = f"Fwd: {subject}"
+    quoted = (
+        "---------- Forwarded message ----------\n"
+        f"From: {src.get('sender', '')}\n"
+        f"Date: {src.get('date', '')}\n"
+        f"Subject: {src.get('subject', '')}\n\n"
+        f"{src.get('body', '')}\n"
+    )
+    return subject, quoted
