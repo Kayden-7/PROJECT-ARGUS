@@ -1,0 +1,17 @@
+modules = ["python-3.12"]
+
+run = "python app.py"
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+ARGUS_DEMO_MODE = "1"
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["sh", "-c", "pip install -r requirements.txt && python app.py"]
+
+[[ports]]
+localPort = 8081
+externalPort = 80

@@ -696,4 +696,7 @@ app = create_app()
 if __name__ == '__main__':
     # Replit (and most PaaS) inject the port via $PORT; fall back to 8081 locally.
     port = int(os.environ.get('PORT', 8081))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Debug/reloader OFF by default — the reloader double-forks and breaks PaaS
+    # deployments (Replit). Set FLASK_DEBUG=1 locally if you want auto-reload.
+    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
+    app.run(host='0.0.0.0', port=port, debug=debug)
