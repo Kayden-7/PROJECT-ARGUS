@@ -90,6 +90,7 @@ import os as _os
 AGENT_MODEL          = "gpt-4o"
 AGENT_PROMPT_VERSION = "v1"
 TAXONOMY_VERSION     = "2026-06-22"
+AGENT_MAX_COMMAND_LEN = 2000
 # Demo mode is process-owned server config (never a request flag). /demo/reset
 # fails closed unless this is set at startup.
 DEMO_MODE = _os.environ.get("ARGUS_DEMO_MODE") == "1"

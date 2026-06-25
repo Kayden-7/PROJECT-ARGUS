@@ -28,7 +28,7 @@ import sqlite3
 
 from config import (
     ALL_ACTIONS, AGENT_MODEL, AGENT_PROMPT_VERSION, TAXONOMY_VERSION,
-    DRAFTING_ACTIONS, OWN_PRIVATE_DOMAIN,
+    AGENT_MAX_COMMAND_LEN, DRAFTING_ACTIONS, OWN_PRIVATE_DOMAIN,
 )
 from argus.validation import REQUIRED_FIELDS, validate_proposal
 from argus.safety_filter import classify_recipient
@@ -262,6 +262,10 @@ def run_agent(command, selected_email_id=None):
     from argus import private_contacts as _pc
     if not command or not isinstance(command, str) or not command.strip():
         return {"agent_status": "AGENT_OUTPUT_INVALID", "detail": "empty command", **_versions()}
+    if len(command) > AGENT_MAX_COMMAND_LEN:
+        return {"agent_status": "AGENT_OUTPUT_INVALID",
+                "detail": f"command too long ({len(command)} chars, max {AGENT_MAX_COMMAND_LEN})",
+                **_versions()}
 
     # Verify selected email if provided (grounding check before interpretation)
     grounding_confirmed = False

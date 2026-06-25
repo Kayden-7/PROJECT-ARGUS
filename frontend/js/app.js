@@ -1169,7 +1169,10 @@ async function handleGenerateProposal() {
     return;
   }
   if (agentBody.agent_status !== 'PROPOSAL') {
-    setProposalStatus('Could not interpret that command. Try rephrasing.');
+    // AGENT_OUTPUT_INVALID carries a real `detail` (e.g. "command too long
+    // (2143 chars, max 2000)") — show that instead of a generic message that
+    // would otherwise hide exactly why it was rejected.
+    setProposalStatus(agentBody.detail || 'Could not interpret that command. Try rephrasing.');
     btn.disabled = false;
     return;
   }
