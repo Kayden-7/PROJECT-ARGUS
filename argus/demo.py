@@ -41,9 +41,13 @@ def reset_demo():
         # admission/queue tables must be reseeded too, or stale dedup/rate
         # rows carry over and silently throttle the next demo run. private_contacts
         # is reseeded to a single fixture below so the demo can SHOW the block.
+        # trust_events = the full trust HISTORY (the gauge is recomputed from it at
+        # read time) → wiping it returns every action to baseline. contact_permissions
+        # holds any per-contact permission state built up during a run.
         for tbl in ("approval_queue", "pending_executions", "agent_proposals",
                     "trust_events", "audit_log", "private_contacts",
-                    "proposal_dedup", "rate_limits", "queue_transition_attempts"):
+                    "proposal_dedup", "rate_limits", "queue_transition_attempts",
+                    "contact_permissions"):
             db.execute(f"DELETE FROM {tbl}")
 
         # audit_events is append-only in production: BEFORE UPDATE/DELETE
@@ -63,11 +67,18 @@ def reset_demo():
             "CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_events "
             "BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END")
 
-        # Reset trust to baseline for every action.
+        # Reset trust to baseline for EVERY row actually present in trust_current
+        # (not just the config action list) — a stray action_type would otherwise
+        # survive the reset and keep a stale gauge. Belt-and-braces: also force-seed
+        # the known config actions in case a row is missing entirely.
+        db.execute(
+            "UPDATE trust_current SET trust_current=?, damping_remaining=0, damping_streak=0",
+            (STARTING_TRUST,))
         for action in FREE_ACTIONS + GATED_ACTIONS:
             db.execute(
-                "UPDATE trust_current SET trust_current=?, damping_remaining=0, damping_streak=0 "
-                "WHERE action_type=?", (STARTING_TRUST, action))
+                "INSERT OR IGNORE INTO trust_current (action_type, trust_current, "
+                "damping_remaining, damping_streak) VALUES (?,?,0,0)",
+                (action, STARTING_TRUST))
 
         # Reset system state to a known demo baseline, including the hard-stop
         # epoch (otherwise it climbs across demos and every prior approval reads
@@ -76,6 +87,7 @@ def reset_demo():
         db.execute("UPDATE system_state SET value='0' WHERE key='HARD_STOP_EPOCH'")
         db.execute("UPDATE system_state SET value='Balanced' WHERE key='ACTIVE_PROFILE'")
         db.execute("UPDATE system_state SET value='1.0' WHERE key='OVERALL_TRUST_MODIFIER'")
+        db.execute("UPDATE system_state SET value='60' WHERE key='UNDO_WINDOW_SECONDS'")
 
         # Seed exactly one protected contact so the demo can SHOW the private-contact
         # block working (an action targeting this address never reaches GPT).
